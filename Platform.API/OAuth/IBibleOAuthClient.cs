@@ -18,12 +18,11 @@ namespace Platform.API.OAuth;
 ///   and the callback carries a <c>granted_permissions</c> query parameter alongside <c>code</c>.
 ///   </description></item>
 ///   <item><description>
-///   The user authenticates and is redirected back. For confidential/server clients this
-///   carries a <c>code</c> query parameter directly — call <see cref="ExchangeCodeAsync"/> with
-///   it. Browser clients instead get an identity-only redirect (<c>yvp_id</c>, <c>user_name</c>,
-///   <c>user_email</c>, <c>profile_picture</c>, <c>state</c> — no <c>code</c>); call
-///   <see cref="CompleteIdentityCallbackAsync"/> with those fields instead, which obtains the
-///   code via a second hop and redeems it internally.
+///   The user authenticates and is redirected back. Most redirects carry only a <c>state</c>
+///   query parameter (no <c>code</c>) — call <see cref="CompleteAuthorizationCallbackAsync"/>
+///   with it, which replays <c>state</c> to the platform's callback endpoint to obtain a
+///   redeemable code via a second hop and redeems it internally. If the redirect instead carries
+///   a <c>code</c> query parameter directly, call <see cref="ExchangeCodeAsync"/> with it instead.
 ///   </description></item>
 ///   <item><description>Either way, the resulting token is automatically stored via <see cref="ITokenProvider"/>.</description></item>
 ///   <item><description>
@@ -95,29 +94,24 @@ public interface IBibleOAuthClient
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Completes the identity-only redirect that browser clients get back from
-    /// <see cref="BuildAuthorizationUrl"/> (<c>yvp_id</c>, <c>user_name</c>, <c>user_email</c>,
-    /// <c>profile_picture</c>, and <c>state</c> query parameters — no <c>code</c>). This is step 2
-    /// of the platform's documented sign-in flow (https://developers.youversion.com/sign-in-apis):
-    /// it sends those identity fields to the callback endpoint to obtain a real authorization
-    /// <c>code</c>, then redeems that code via <see cref="ExchangeCodeAsync"/> (step 3). The
-    /// resulting token is stored via <see cref="ITokenProvider"/>, same as <see cref="ExchangeCodeAsync"/>.
+    /// Completes the state-only redirect that <see cref="BuildAuthorizationUrl"/> sends the user
+    /// back to (a bare <c>state</c> query parameter — no <c>code</c>, and, per the platform's
+    /// 2026-07-20 sign-in change, no identity parameters either). This is step 2 of the platform's
+    /// documented sign-in flow (https://developers.youversion.com/sign-in-apis): it replays
+    /// <paramref name="state"/> to the callback endpoint to obtain a real authorization
+    /// <c>code</c> (and any <c>granted_permissions</c> reported alongside it), then redeems that
+    /// code via <see cref="ExchangeCodeAsync"/> (step 3). The resulting token is stored via
+    /// <see cref="ITokenProvider"/>, same as <see cref="ExchangeCodeAsync"/>. User identity is no
+    /// longer available on the redirect itself — read it from the returned token's <c>id_token</c>
+    /// claims instead (see <see cref="OAuthTokenResponse.GetClaim"/> and friends).
     /// </summary>
-    /// <param name="state">The <c>state</c> query parameter received on the identity redirect.</param>
-    /// <param name="yvpId">The <c>yvp_id</c> query parameter received on the identity redirect.</param>
-    /// <param name="userName">The <c>user_name</c> query parameter, if present.</param>
-    /// <param name="userEmail">The <c>user_email</c> query parameter, if present.</param>
-    /// <param name="profilePicture">The <c>profile_picture</c> query parameter, if present.</param>
+    /// <param name="state">The <c>state</c> query parameter received on the redirect.</param>
     /// <param name="codeVerifier">The PKCE code verifier from the matching <see cref="PkceValues"/>.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
-    /// <returns>The <see cref="OAuthTokenResponse"/> containing the access and refresh tokens.</returns>
-    /// <exception cref="ArgumentException">Thrown when <paramref name="state"/>, <paramref name="yvpId"/>, or <paramref name="codeVerifier"/> is empty.</exception>
-    Task<OAuthTokenResponse> CompleteIdentityCallbackAsync(
+    /// <returns>The redeemed token, plus any granted/denied permissions reported alongside it.</returns>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="state"/> or <paramref name="codeVerifier"/> is empty.</exception>
+    Task<AuthorizationCallbackResult> CompleteAuthorizationCallbackAsync(
         string state,
-        string yvpId,
-        string? userName,
-        string? userEmail,
-        string? profilePicture,
         string codeVerifier,
         CancellationToken cancellationToken = default);
 

@@ -1,0 +1,168 @@
+using System.Net;
+using System.Net.Http;
+
+using FluentAssertions;
+
+using Microsoft.Extensions.Logging.Abstractions;
+
+using Platform.API.Clients;
+using Platform.API.Exceptions;
+using Platform.API.Tests.Fakes;
+
+using Xunit;
+
+namespace Platform.API.Tests.Clients;
+
+public sealed class OrganizationClientTests
+{
+    private const string OrganizationJson = """
+        {
+          "id": "550e8400-e29b-41d4-a716-446655440000",
+          "name": "Example Publisher",
+          "description": "A sample publisher",
+          "email": "contact@example.com",
+          "phone": "+1-555-0100",
+          "primary_language": "en",
+          "website_url": "https://example.com",
+          "address": {
+            "formatted_address": "123 Main St, Austin, TX, USA",
+            "formatted_locality": "Austin, TX",
+            "place_id": "abc123",
+            "latitude": 30.2672,
+            "longitude": -97.7431,
+            "administrative_area_level_1": { "short_name": "TX", "long_name": "Texas" },
+            "locality": { "short_name": "Austin", "long_name": "Austin" },
+            "country": { "short_name": "US", "long_name": "United States" }
+          }
+        }
+        """;
+
+    [Fact]
+    public async Task GetOrganizationsAsync_ReturnsPage_WhenApiSucceeds()
+    {
+        var client = BuildClient(HttpStatusCode.OK, $$"""{"data": [{{OrganizationJson}}], "next_page_token": "tok"}""");
+
+        var result = await client.GetOrganizationsAsync();
+
+        result.Data.Should().HaveCount(1);
+        result.Data[0].Name.Should().Be("Example Publisher");
+        result.Data[0].Address!.AdministrativeAreaLevel1!.ShortName.Should().Be("TX");
+        result.NextPageToken.Should().Be("tok");
+    }
+
+    [Fact]
+    public async Task GetOrganizationsAsync_BuildsExpectedQueryString()
+    {
+        var handler = new FakeHttpMessageHandler(HttpStatusCode.OK, """{"data": []}""");
+        var client = BuildClientFromHandler(handler);
+
+        await client.GetOrganizationsAsync(bibleIds: [111, 206], pageToken: "tok", pageSize: 5);
+
+        var query = handler.LastRequest!.RequestUri!.Query;
+        query.Should().Contain("bible_ids[]=111");
+        query.Should().Contain("bible_ids[]=206");
+        query.Should().Contain("page_token=tok");
+        query.Should().Contain("page_size=5");
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.NotFound)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    public async Task GetOrganizationsAsync_ThrowsBibleApiException_WhenApiReturnsError(HttpStatusCode status)
+    {
+        var client = BuildClient(status, "error body");
+        var act = () => client.GetOrganizationsAsync();
+        await act.Should().ThrowAsync<BibleApiException>().Where(e => e.StatusCode == status);
+    }
+
+    [Fact]
+    public async Task GetOrganizationAsync_ReturnsOrganization_WhenApiSucceeds()
+    {
+        var client = BuildClient(HttpStatusCode.OK, OrganizationJson);
+
+        var result = await client.GetOrganizationAsync("550e8400-e29b-41d4-a716-446655440000");
+
+        result.Name.Should().Be("Example Publisher");
+        result.Email.Should().Be("contact@example.com");
+    }
+
+    [Fact]
+    public async Task GetOrganizationAsync_RequestsExpectedPath()
+    {
+        var handler = new FakeHttpMessageHandler(HttpStatusCode.OK, OrganizationJson);
+        var client = BuildClientFromHandler(handler);
+
+        await client.GetOrganizationAsync("org-1");
+
+        handler.LastRequest!.RequestUri!.AbsolutePath.Should().Be("/v1/organizations/org-1");
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    public async Task GetOrganizationAsync_ThrowsArgumentException_WhenOrganizationIdIsInvalid(string organizationId)
+    {
+        var client = BuildClient(HttpStatusCode.OK, OrganizationJson);
+        var act = () => client.GetOrganizationAsync(organizationId);
+        await act.Should().ThrowAsync<ArgumentException>();
+    }
+
+    [Fact]
+    public async Task GetOrganizationAsync_ThrowsBibleEmptyResponseException_WhenBodyIsNull()
+    {
+        var client = BuildClient(HttpStatusCode.OK, "null");
+        var act = () => client.GetOrganizationAsync("org-1");
+        await act.Should().ThrowAsync<BibleEmptyResponseException>();
+    }
+
+    [Fact]
+    public async Task GetOrganizationBiblesAsync_ReturnsPage_WhenApiSucceeds()
+    {
+        const string json = """
+            {
+              "data": [
+                {
+                  "id": 3034,
+                  "abbreviation": "BSB",
+                  "localized_abbreviation": "BSB",
+                  "title": "Berean Standard Bible",
+                  "localized_title": "Berean Standard Bible",
+                  "language_tag": "en",
+                  "books": ["GEN", "EXO"],
+                  "organization_id": "org-1"
+                }
+              ],
+              "next_page_token": "tok2",
+              "total_size": 1
+            }
+            """;
+        var client = BuildClient(HttpStatusCode.OK, json);
+
+        var result = await client.GetOrganizationBiblesAsync("org-1");
+
+        result.Data.Should().HaveCount(1);
+        result.Data[0].Abbreviation.Should().Be("BSB");
+        result.Data[0].Books.Should().Equal("GEN", "EXO");
+        result.TotalSize.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task GetOrganizationBiblesAsync_RequestsExpectedPath()
+    {
+        var handler = new FakeHttpMessageHandler(HttpStatusCode.OK, """{"data": []}""");
+        var client = BuildClientFromHandler(handler);
+
+        await client.GetOrganizationBiblesAsync("org-1");
+
+        handler.LastRequest!.RequestUri!.AbsolutePath.Should().Be("/v1/organizations/org-1/bibles");
+    }
+
+    private static OrganizationClient BuildClient(HttpStatusCode status, string json)
+        => BuildClientFromHandler(new FakeHttpMessageHandler(status, json));
+
+    private static OrganizationClient BuildClientFromHandler(FakeHttpMessageHandler handler)
+    {
+        var httpClient = new HttpClient(handler) { BaseAddress = new System.Uri("https://api.youversion.com") };
+        return new OrganizationClient(httpClient, NullLogger<OrganizationClient>.Instance);
+    }
+}

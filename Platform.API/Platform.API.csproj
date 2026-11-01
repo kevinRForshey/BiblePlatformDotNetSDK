@@ -7,8 +7,8 @@
 
     <!-- Package metadata (no PackageId: not published, clone-and-reference only) -->
     <Product>Bible Platform API Client</Product>
-    <Description>HTTP client SDK for the Platform REST API. Provides typed clients for Bibles, Passages, and Highlights with built-in Microsoft.Extensions.Http integration and DI support.</Description>
-    <PackageTags>bible;api;httpclient;sdk;dependencyinjection</PackageTags>
+    <Description>HTTP client SDK for the Platform REST API. Provides typed clients for Bibles, Passages, Highlights, Apps, Languages, Fonts, Licenses, Organizations, Images, Verse of the Day, Permissions, and Search, plus OAuth sign-in, with built-in Microsoft.Extensions.Http integration and DI support.</Description>
+    <PackageTags>bible;api;httpclient;sdk;dependencyinjection;oauth;search</PackageTags>
     <PackageProjectUrl>https://github.com/kevinRForshey/BiblePlatformDotNetSDK</PackageProjectUrl>
     <RepositoryUrl>https://github.com/kevinRForshey/BiblePlatformDotNetSDK</RepositoryUrl>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>

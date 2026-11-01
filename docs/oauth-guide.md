@@ -54,11 +54,11 @@ sequenceDiagram
     YV->>YV: User signs in
     YV->>User: Redirect back to RedirectUri
 
-    alt Browser client (identity-only redirect)
-        User->>App: GET /?yvp_id=...&user_name=...&state=...  (no code)
+    alt Browser client (state-only redirect — the common case since 2026-07-20)
+        User->>App: GET /?state=...  (no code, no identity fields)
         App->>App: ValidateState(expected, returned)
-        App->>YV: CompleteIdentityCallbackAsync(...)<br/>GET /auth/callback?yvp_id=...
-        YV->>App: 302 Location: ...&code=...
+        App->>YV: CompleteAuthorizationCallbackAsync(...)<br/>GET /auth/callback?state=...
+        YV->>App: 302 Location: ...&code=...&granted_permissions=...
         App->>YV: POST /auth/token<br/>(code, code_verifier, client_id)
         YV->>App: access_token, refresh_token, id_token
     else Confidential/server client (code directly)
@@ -71,9 +71,16 @@ sequenceDiagram
     App->>App: ITokenProvider.StoreTokenAsync(token)
 ```
 
-The **identity-only redirect** is the shape most browser-based apps (including the sample
+The **state-only redirect** is the shape most browser-based apps (including the sample
 `PlatformTestApp`) actually receive — see [Step 4](#step-4-handle-the-callback) below for why
 there are two shapes and how each is handled.
+
+> **Platform change (2026-07-20/21):** the state-only redirect used to carry identity fields
+> directly (`yvp_id`, `user_name`, `user_email`, `profile_picture`) instead of just `state`. The
+> platform no longer sends those on this redirect at all — identity now only comes from the
+> `id_token` claims returned by the final token exchange. If you're looking at code or docs that
+> mention `CompleteIdentityCallbackAsync` or those query parameters, it predates this change; use
+> `CompleteAuthorizationCallbackAsync` instead.
 
 ---
 
@@ -101,7 +108,7 @@ binds from the `BibleOAuth` configuration section and controls every endpoint th
 | `ClientId` | *(required)* | Your registered client id. Apps can reuse their app key as the client id. |
 | `RedirectUri` | `null` | Must match a URI registered in the developer portal. |
 | `AuthorizationEndpoint` | `https://api.youversion.com/auth/authorize` | Where `BuildAuthorizationUrl` sends the user. |
-| `AuthCallbackEndpoint` | `https://api.youversion.com/auth/callback` | Used internally by `CompleteIdentityCallbackAsync` — see Step 4. |
+| `AuthCallbackEndpoint` | `https://api.youversion.com/auth/callback` | Used internally by `CompleteAuthorizationCallbackAsync` — see Step 4. |
 | `TokenEndpoint` | `https://api.youversion.com/auth/token` | Where codes and refresh tokens are redeemed. |
 | `Scopes` | `"openid profile email"` | The only scopes the platform's sign-in API supports. There is no scope for resource permissions like `highlights` — those go through the separate Data Exchange flow (see [below](#requesting-additional-permissions-data-exchange)). |
 | `OAuthTokenExpiryBufferSeconds` | `60` | How early `OAuthBearerTokenHandler` proactively refreshes (Step 9). |
@@ -132,7 +139,8 @@ Internally this:
    identity claims).
 4. Builds the query string: `response_type=code`, `client_id`, `redirect_uri` (if configured),
    `nonce`, `state`, `code_challenge`, `code_challenge_method=S256`, `scope`, and optionally
-   repeated `requested_permissions` entries.
+   repeated `requested_permissions[]` entries (the array-bracket suffix is required — the platform
+   silently ignores a bare `requested_permissions` and never shows the consent UI for it).
 
 **What you must keep:** `AuthorizationRequest.Pkce.CodeVerifier` and the `state` value. Nothing
 else from this step needs to survive the redirect — the challenge and nonce are already embedded
@@ -148,18 +156,19 @@ the platform redirects back to your `RedirectUri`.
 This is the part that trips people up: **the platform's redirect back does not always carry a
 redeemable `code`.** There are two shapes, and your callback route needs to handle both.
 
-### Shape A — Browser clients: identity-only redirect (the common case)
+### Shape A — Browser clients: state-only redirect (the common case)
 
-The redirect carries identity fields instead of a code:
+The redirect carries only `state` — no code, and (since the platform's 2026-07-20 sign-in
+change) no identity fields either:
 
 ```
-GET /?yvp_id=...&user_name=...&user_email=...&profile_picture=...&state=...
+GET /?state=...
 ```
 
-`yvp_id` is the reliable discriminator — only a genuine platform redirect sets it. To finish
-signing in, validate `state` and then call `CompleteIdentityCallbackAsync`
-([`BibleOAuthClient.cs:141-199`](../Platform.API/OAuth/BibleOAuthClient.cs)), which does
-the remaining two hops **for you**:
+The absence of `code` is the reliable discriminator for this shape. To finish signing in,
+validate `state` and then call `CompleteAuthorizationCallbackAsync`
+([`BibleOAuthClient.cs`](../Platform.API/OAuth/BibleOAuthClient.cs)), which does the remaining
+two hops **for you**:
 
 ```csharp
 if (!oauthClient.ValidateState(expectedState, returnedState))
@@ -167,24 +176,29 @@ if (!oauthClient.ValidateState(expectedState, returnedState))
     // reject — possible CSRF, or an expired session
 }
 
-var token = await oauthClient.CompleteIdentityCallbackAsync(
+var result = await oauthClient.CompleteAuthorizationCallbackAsync(
     state: returnedState,
-    yvpId: yvpId,
-    userName: userName,
-    userEmail: userEmail,
-    profilePicture: profilePicture,
     codeVerifier: storedCodeVerifier);
+
+var token = result.Token;
 ```
 
-Under the hood, `CompleteIdentityCallbackAsync`:
+Under the hood, `CompleteAuthorizationCallbackAsync`:
 
-1. Sends those identity fields as a `GET` to `AuthCallbackEndpoint`
-   (`https://api.youversion.com/auth/callback`).
-2. Reads the real authorization `code` out of that response's `Location` header (the OAuth client
-   is registered with `AllowAutoRedirect = false` specifically so this header is inspectable
-   instead of being followed automatically).
+1. Replays `state` as a `GET` to `AuthCallbackEndpoint` (`https://api.youversion.com/auth/callback`).
+2. Reads the real authorization `code` (and, if present, `granted_permissions`) out of that
+   response's `Location` header (the OAuth client is registered with `AllowAutoRedirect = false`
+   specifically so this header is inspectable instead of being followed automatically).
 3. Calls `ExchangeCodeAsync` (Shape B, below) with that code — so you end up with a real token
    either way.
+
+Identity is no longer carried on the redirect at all — once you have the token, read identity
+claims (name, email, etc.) out of `result.Token`'s `id_token` via `GetClaim`/`GetUserName`/
+`GetEmail`/`GetDisplayIdentity` on `OAuthTokenResponse`.
+
+`result.GrantedPermissions` is `null` when this round trip didn't request any Data Exchange
+permissions (not the same as "denied" — treating `null` as denied would wipe out a permission
+granted on a *previous* round trip), or the (possibly empty) list of granted permissions if it did.
 
 ### Shape B — Confidential/server clients: code directly
 
@@ -230,13 +244,13 @@ A missing `expectedState` (e.g. an expired session) **fails** the check — it i
 [`PlatformTestApp/Program.cs`](../PlatformTestApp/Program.cs) is the fully working example. Key
 pieces:
 
-- `RedirectToAuthorize` (~line 242) — calls `BuildAuthorizationUrl` and stashes
-  `pkce_verifier`/`oauth_state` in session before redirecting.
-- Middleware branch on `ctx.Request.Query.ContainsKey("yvp_id")` (~line 135) — Shape A, calls
-  `CompleteIdentityCallbackAsync`.
-- Middleware branch on `ctx.Request.Query.ContainsKey("code")` (~line 89) — parks the code in
-  session and redirects to `/auth/callback-complete` (~line 274), which validates state and calls
-  `ExchangeCodeAsync` — Shape B.
+- `RedirectToAuthorize` — calls `BuildAuthorizationUrl` and stashes `pkce_verifier`/`oauth_state`
+  in session before redirecting.
+- `OAuthCallbackHandlers.TryHandleStateOnlyCallbackAsync` — Shape A, gated on `state` present and
+  `code` absent, calls `CompleteAuthorizationCallbackAsync`.
+- `OAuthCallbackHandlers.TryHandleAuthorizationCodeCallback` — parks the code in session and
+  redirects to `/auth/callback-complete`, which validates state and calls `ExchangeCodeAsync` —
+  Shape B.
 
 Because a top-level OAuth redirect only has a real `HttpContext`/session in a minimal-API endpoint
 (not inside a live Blazor circuit), the callback is handled as plain ASP.NET Core middleware/minimal
@@ -391,7 +405,7 @@ worth reading once the core sign-in flow above is working.
 | Symptom | Cause |
 |---|---|
 | `InvalidOperationException` mentioning `AddBibleApiClients` | `AddBibleOAuth` was called before `AddBibleApiClients`. |
-| Callback never carries `code`, only `yvp_id`/`user_name`/etc. | Expected — this is Shape A. Call `CompleteIdentityCallbackAsync`, not `ExchangeCodeAsync`, for this shape. |
+| Callback never carries `code`, only `state` | Expected — this is Shape A. Call `CompleteAuthorizationCallbackAsync`, not `ExchangeCodeAsync`, for this shape. |
 | `ValidateState` always returns `false` | Check the session/store used to persist `state` between the redirect out and the callback — a common cause is losing session state across the external redirect (e.g. cookie not sent, session expired). |
 | Token appears valid but `IsExpired` returns `true` immediately after loading from storage | `ReceivedAt` is `[JsonIgnore]` — your `ITokenProvider` must persist and restore it separately, or it resets to "now" (see Step 6) or, depending on direction, always looks stale. |
 | One user's session shows another user's sign-in state | `InMemoryTokenProvider` (the default) is a process-wide singleton — register a scoped `ITokenProvider` before `AddBibleOAuth` (Step 7). |

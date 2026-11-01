@@ -16,6 +16,13 @@ using var host = builder.Build();
 
 var bibleClient = host.Services.GetRequiredService<IBibleClient>();
 var passageClient = host.Services.GetRequiredService<IPassageClient>();
+var languageClient = host.Services.GetRequiredService<ILanguageClient>();
+var fontClient = host.Services.GetRequiredService<IFontClient>();
+var licenseClient = host.Services.GetRequiredService<ILicenseClient>();
+var organizationClient = host.Services.GetRequiredService<IOrganizationClient>();
+var imageClient = host.Services.GetRequiredService<IImageClient>();
+var verseOfTheDayClient = host.Services.GetRequiredService<IVerseOfTheDayClient>();
+var searchClient = host.Services.GetRequiredService<ISearchClient>();
 
 Console.WriteLine("Bible Platform SDK - Console Sample");
 Console.WriteLine("====================================");
@@ -40,3 +47,36 @@ var reference = Reference.FromString("JHN.3.16");
 var passage = await passageClient.GetPassageAsync(versionId, reference);
 Console.WriteLine($"\n{passage.Reference}:");
 Console.WriteLine(passage.Content);
+
+var languages = await languageClient.GetLanguagesAsync(pageSize: 5);
+Console.WriteLine($"\nFirst {languages.Data.Count} language(s):");
+foreach (var language in languages.Data)
+{
+    Console.WriteLine($"  {language.Id,-8} {language.LanguageSubtag,-6} {language.LocalizedName}");
+}
+
+var fonts = await fontClient.GetFontsAsync();
+Console.WriteLine($"\nFound {fonts.Count} font famil(y/ies); first: {fonts.FirstOrDefault()?.Family ?? "(none)"}");
+
+var licenses = await licenseClient.GetLicensesAsync(versionId);
+Console.WriteLine($"\nFound {licenses.Count} license(s) for version {versionId}.");
+
+var organizations = await organizationClient.GetOrganizationsAsync(pageSize: 5);
+Console.WriteLine($"\nFirst {organizations.Data.Count} organization(s):");
+foreach (var organization in organizations.Data)
+{
+    Console.WriteLine($"  {organization.Id,-8} {organization.Name}");
+}
+
+var images = await imageClient.GetImagesAsync(passageId: "JHN.3.16", pageSize: 3);
+Console.WriteLine($"\nFound {images.Data.Count} verse-art image(s) for JHN.3.16.");
+
+var verseOfTheDay = await verseOfTheDayClient.GetVerseOfTheDayAsync(DateTime.UtcNow.DayOfYear);
+Console.WriteLine($"\nToday's verse of the day: {verseOfTheDay.PassageId}");
+
+var searchResult = await searchClient.SearchVersesAsync("love", versionId, pageSize: 5);
+Console.WriteLine($"\nFound {searchResult.Verses.Count} verse(s) matching 'love':");
+foreach (var verse in searchResult.Verses)
+{
+    Console.WriteLine($"  {verse.Reference}");
+}

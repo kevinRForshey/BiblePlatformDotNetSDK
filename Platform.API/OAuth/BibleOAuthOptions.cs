@@ -32,13 +32,12 @@ public sealed class BibleOAuthOptions
         new("https://api.youversion.com/auth/authorize");
 
     /// <summary>
-    /// The identity callback endpoint URL. Browser clients hitting <see cref="AuthorizationEndpoint"/>
-    /// get redirected back with identity fields only (<c>yvp_id</c>, <c>user_name</c>,
-    /// <c>user_email</c>, <c>profile_picture</c>, <c>state</c>) rather than a redeemable
-    /// <c>code</c> — this is step 2 of the platform's documented sign-in flow
-    /// (https://developers.youversion.com/sign-in-apis): those identity fields are sent here to
-    /// obtain the actual authorization code. See
-    /// <see cref="IBibleOAuthClient.CompleteIdentityCallbackAsync"/>.
+    /// The auth callback endpoint URL. Redirecting to <see cref="AuthorizationEndpoint"/> sends
+    /// the user back with only a <c>state</c> query parameter (no <c>code</c>, and, as of the
+    /// platform's 2026-07-20 sign-in change, no identity fields either) — this is step 2 of the
+    /// platform's documented sign-in flow (https://developers.youversion.com/sign-in-apis):
+    /// <c>state</c> is replayed here to obtain the actual authorization code. See
+    /// <see cref="IBibleOAuthClient.CompleteAuthorizationCallbackAsync"/>.
     /// Defaults to the platform's callback server.
     /// </summary>
     public Uri AuthCallbackEndpoint { get; set; } =

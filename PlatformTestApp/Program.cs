@@ -88,7 +88,7 @@ app.Use(async (HttpContext ctx, RequestDelegate next) =>
     if (await OAuthCallbackHandlers.TryHandleDataExchangeCallbackAsync(ctx))
         return;
 
-    if (await OAuthCallbackHandlers.TryHandleIdentityCallbackAsync(ctx))
+    if (await OAuthCallbackHandlers.TryHandleStateOnlyCallbackAsync(ctx))
         return;
 
     if (await OAuthCallbackHandlers.TryHandleDevSignInAsync(ctx, app.Environment.IsDevelopment()))
@@ -104,7 +104,7 @@ app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 
 // Builds a fresh PKCE authorization redirect and parks the verifier/state in session. Shared by
-// /auth/login and /auth/request-highlights so both land on the same yvp_id callback branch and
+// /auth/login and /auth/request-highlights so both land on the same state-only callback branch and
 // reuse the same tested sign-in path, rather than /auth/request-highlights taking the separate
 // (less-exercised) RequestPermissionsAsync + BuildDataExchangeApprovalUrl round trip. Switch to
 // that two-step flow if avoiding the extra redirect for already-signed-in users matters more.

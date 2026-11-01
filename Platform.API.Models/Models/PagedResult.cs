@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using System.Text.Json.Serialization;
 
 namespace Platform.API.Models;
@@ -22,4 +21,11 @@ public sealed record PagedResult<T>
     /// </value>
     [JsonPropertyName("next_page_token")]
     public string? NextPageToken { get; init; }
+
+    /// <summary>
+    /// Gets the total number of items across all pages, when the endpoint reports it.
+    /// </summary>
+    /// <value>The total item count, or <see langword="null"/> when not reported.</value>
+    [JsonPropertyName("total_size")]
+    public int? TotalSize { get; init; }
 }

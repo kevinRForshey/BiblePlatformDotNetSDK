@@ -6,6 +6,14 @@ git tags (see `README.md` — "Versioning & Releases").
 
 ## [Unreleased]
 
+### Added
+- Clients for the nine remaining Bible Platform API categories that had no .NET coverage:
+  `IAppClient`, `ILanguageClient`, `IFontClient`, `ILicenseClient`, `IOrganizationClient`,
+  `IImageClient`, `IVerseOfTheDayClient`, `IPermissionClient` (OAuth-authenticated), and
+  `ISearchClient` (query suggestions, unified/topic/verse/image search). Registered via
+  `AddBibleApiClients`/`AddBibleOAuth` alongside the existing Bible/Passage/Highlight clients, with
+  matching models in `Platform.API.Models`.
+
 ### Changed
 - Relicensed from MIT to Apache License 2.0 (all five packages, including
   `BiblePlatform.UsfmReferences`). See `LICENSE` and the new `NOTICE` file.
@@ -18,6 +26,15 @@ git tags (see `README.md` — "Versioning & Releases").
   the "Enforce coverage floor" step in `.github/workflows/ci.yml`.
 
 ### Fixed
+- `IBibleOAuthClient.CompleteIdentityCallbackAsync` sent identity fields (`yvp_id`, `user_name`,
+  `user_email`, `profile_picture`) from the OAuth callback redirect back to the platform to
+  retrieve a code. Following the platform's 2026-07-20/21 sign-in change, the callback redirect no
+  longer carries those fields at all — only `state` — so that method could never succeed. Replaced
+  it with `CompleteAuthorizationCallbackAsync(state, codeVerifier)`, which replays `state` alone to
+  `AuthCallbackEndpoint` and returns the new `AuthorizationCallbackResult` (the redeemed token, plus
+  `GrantedPermissions` distinguishing "not requested" from "requested and empty"). User identity is
+  now read from the token's `id_token` claims instead of the callback query string. Updated
+  `PlatformTestApp`'s callback handling and `docs/oauth-guide.md` to match.
 - `Platform.API/README.md`'s install snippet showed a stale `Version="1.0.0"` that doesn't exist on
   the feed (actual published version was `0.1.0`), which would cause a restore failure for anyone
   copying it as-is.
@@ -27,6 +44,12 @@ git tags (see `README.md` — "Versioning & Releases").
   the top-level `README.md`'s OAuth/PKCE guide link. `docs/getting-started.md` and
   `docs/authentication.md` were also missing entirely (the "Getting started" and "Authentication"
   links pointed at files that had never been created) — both added.
+- `BuildAuthorizationUrl`/`BuildDirectDataExchangeUrl` sent requested Data Exchange permissions as
+  a bare `requested_permissions=highlights` query parameter. The platform requires the array-bracket
+  form (`requested_permissions[]=highlights`) and silently ignores the unbracketed name, so the
+  consent UI never showed the permission and the resulting callback never carried
+  `granted_permissions` — a sign-in would succeed but a subsequent "grant highlights access" request
+  made during that same sign-in redirect would never actually be granted.
 
 ## [0.1.0] - 2026-07-14
 

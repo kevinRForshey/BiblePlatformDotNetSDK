@@ -61,16 +61,27 @@ internal static class OAuthCallbackHandlers
     }
 
     /// <remarks>
-    /// Browser clients get identity fields back, not a redeemable `code`:
-    ///   ?profile_picture=...&amp;state=...&amp;user_email=...&amp;user_name=...&amp;yvp_id=...&amp;granted_permissions=highlights
-    /// Normal step-1 behavior (https://developers.youversion.com/sign-in-apis), not a fallback.
-    /// `yvp_id` only appears on a genuine platform redirect, so it can't collide with the
-    /// dev-only shortcut. CompleteIdentityCallbackAsync runs steps 2-3 and returns a real token.
+    /// Since the platform's 2026-07-20 sign-in change, the normal (non-fallback) step-1 shape for
+    /// browser clients is a bare `?state=...` — no `code`, and no identity fields
+    /// (https://developers.youversion.com/sign-in-apis). `CompleteAuthorizationCallbackAsync` runs
+    /// steps 2-3 (replay `state` to `/auth/callback` for a `code`, then redeem it) and returns a
+    /// real token; identity now comes from the token's `id_token` claims, not the redirect.
     /// </remarks>
-    public static async Task<bool> TryHandleIdentityCallbackAsync(HttpContext ctx)
+    public static async Task<bool> TryHandleStateOnlyCallbackAsync(HttpContext ctx)
     {
-        if (!ctx.Request.Query.ContainsKey("yvp_id"))
+        if (!ctx.Request.Query.ContainsKey("state") || ctx.Request.Query.ContainsKey("code"))
             return false;
+
+        // In live testing, the platform attaches the Data Exchange grant result to THIS
+        // state-only redirect, not to the server-to-server replay CompleteAuthorizationCallbackAsync
+        // makes to /auth/callback in step 2 — that replay's response has never been observed to
+        // carry granted_permissions, despite BuildAuthorizationUrl's docs describing it as an
+        // either/or. Capture it here before it's lost; empty string (present, no value) still means
+        // "requested and denied," distinct from the key being absent ("not requested").
+        string[]? grantedPermissionsFromRedirect = ctx.Request.Query.ContainsKey("granted_permissions")
+            ? ctx.Request.Query["granted_permissions"].ToString()
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            : null;
 
         var expectedState = ctx.Session.GetString("oauth_state");
         var returnedState = ctx.Request.Query["state"].ToString();
@@ -91,31 +102,27 @@ internal static class OAuthCallbackHandlers
             return true;
         }
 
-        var userName = ctx.Request.Query["user_name"].ToString();
-        var userEmail = ctx.Request.Query["user_email"].ToString();
-        var profilePicture = ctx.Request.Query["profile_picture"].ToString();
-        var yvpId = ctx.Request.Query["yvp_id"].ToString();
-
+        AuthorizationCallbackResult result;
         try
         {
-            await oauthClient.CompleteIdentityCallbackAsync(
-                returnedState, yvpId, userName, userEmail, profilePicture, verifier);
+            result = await oauthClient.CompleteAuthorizationCallbackAsync(returnedState, verifier);
         }
         catch (Exception ex)
         {
             ctx.RequestServices.GetRequiredService<ILogger<Program>>()
-                .LogError(ex, "Completing the identity callback failed.");
+                .LogError(ex, "Completing the authorization callback failed.");
             ctx.Response.Redirect($"/?oauth_error={Uri.EscapeDataString("Sign-in failed while completing the callback. Please try again.")}");
             return true;
         }
 
-        // Absent = not requested this round trip, NOT denied — treating it as denied would wipe
-        // out an existing grant from a prior /auth/request-highlights approval.
-        if (ctx.Request.Query.ContainsKey("granted_permissions"))
+        // Null = not requested this round trip, NOT denied — treating it as denied would wipe
+        // out an existing grant from a prior /auth/request-highlights approval. Prefer whatever
+        // the replay reported (per the platform's documented either/or), falling back to what
+        // the initial redirect carried, since that's the shape actually observed live.
+        var grantedPermissions = result.GrantedPermissions ?? grantedPermissionsFromRedirect;
+        if (grantedPermissions is not null)
         {
-            var highlightsGranted = ctx.Request.Query["granted_permissions"].ToString()
-                .Split(',', StringSplitOptions.RemoveEmptyEntries)
-                .Contains("highlights", StringComparer.OrdinalIgnoreCase);
+            var highlightsGranted = grantedPermissions.Contains("highlights", StringComparer.OrdinalIgnoreCase);
             await ctx.RequestServices.GetRequiredService<HighlightsPermissionStore>().SetGrantedAsync(highlightsGranted);
             ctx.Response.Redirect($"/?auth_mode=direct&highlights={(highlightsGranted ? "granted" : "denied")}");
             return true;
@@ -129,7 +136,7 @@ internal static class OAuthCallbackHandlers
     /// Dev-only shortcut to exercise the UI without a live OAuth round trip. Builds an unsigned
     /// token from raw query params — must never be reachable outside Development, since anyone
     /// could pass ?dev_signin=1&amp;user_name=admin and appear signed in. Gated on the `dev_signin`
-    /// marker so it can't collide with a real callback, which is keyed on `yvp_id` instead.
+    /// marker so it can't collide with a real callback, which is keyed on `state` instead.
     /// </remarks>
     public static async Task<bool> TryHandleDevSignInAsync(HttpContext ctx, bool isDevelopmentEnvironment)
     {

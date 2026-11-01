@@ -26,7 +26,19 @@ All types are immutable record types with System.Text.Json property-name attribu
 | PassageRequestOptions | Options controlling format, headings, and footnotes |
 | PassageFormat | Text or Html enum |
 | Highlight | A user Bible verse highlight — identified by (BibleId, PassageId), Color is a hex string |
-| PagedResult(T) | Generic paged envelope with Data and NextPageToken |
+| App | App metadata (id, name, description, website, status) |
+| Language | Language metadata, including display names and script/writing-population data |
+| Font, FontVariant, FontSource | Font family metadata and its variant/source files |
+| License | A Bible content license, including agreed/held state when applicable |
+| Organization, OrganizationAddress, AddressComponent | Publisher/organization metadata and address |
+| OrganizationBible | A Bible version published by an organization |
+| VerseImage | Verse-art image metadata (URL, passage, dimensions, attribution) |
+| VerseOfTheDay | A single day's verse-of-the-day entry (passage, optional image) |
+| AppPermissions | Permissions a signed-in user has granted to an app |
+| SearchQuerySuggestion | An autocomplete or trending search query suggestion |
+| SearchVerse, SearchTopic, SearchImage | Individual items returned by search results |
+| UnifiedSearchResult, TopicSearchResult, VerseSearchResult, ImageSearchResult | Combined/per-category search result envelopes |
+| PagedResult(T) | Generic paged envelope with Data, NextPageToken, and optional TotalSize |
 
 ## Target framework
 

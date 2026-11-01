@@ -34,6 +34,16 @@ public static class ServiceCollectionExtensions
     internal const string HighlightClientName = nameof(HighlightClient);
 
     /// <summary>
+    /// The named-HttpClient registration name used for <see cref="PermissionClient"/>'s pipeline.
+    /// </summary>
+    /// <remarks>
+    /// Mirrors <see cref="HighlightClientName"/>: <see cref="AddBibleOAuth"/> appends
+    /// <see cref="OAuthBearerTokenHandler"/> onto this same named client, since permissions are
+    /// scoped to the signed-in user and require a bearer token.
+    /// </remarks>
+    internal const string PermissionClientName = nameof(PermissionClient);
+
+    /// <summary>
     /// Registers the Platform API clients (<see cref="IBibleClient"/>,
     /// <see cref="IPassageClient"/>, and <see cref="IHighlightClient"/>) and their
     /// supporting infrastructure with the dependency-injection container.
@@ -73,6 +83,15 @@ public static class ServiceCollectionExtensions
         RegisterTypedClient<IBibleClient, BibleClient>(services);
         RegisterTypedClient<IPassageClient, PassageClient>(services);
         RegisterTypedClient<IHighlightClient, HighlightClient>(services, HighlightClientName);
+        RegisterTypedClient<IAppClient, AppClient>(services);
+        RegisterTypedClient<ILanguageClient, LanguageClient>(services);
+        RegisterTypedClient<IFontClient, FontClient>(services);
+        RegisterTypedClient<ILicenseClient, LicenseClient>(services);
+        RegisterTypedClient<IOrganizationClient, OrganizationClient>(services);
+        RegisterTypedClient<IImageClient, ImageClient>(services);
+        RegisterTypedClient<IVerseOfTheDayClient, VerseOfTheDayClient>(services);
+        RegisterTypedClient<IPermissionClient, PermissionClient>(services, PermissionClientName);
+        RegisterTypedClient<ISearchClient, SearchClient>(services);
         return services;
     }
 
@@ -113,6 +132,15 @@ public static class ServiceCollectionExtensions
         RegisterTypedClient<IBibleClient, BibleClient>(services);
         RegisterTypedClient<IPassageClient, PassageClient>(services);
         RegisterTypedClient<IHighlightClient, HighlightClient>(services, HighlightClientName);
+        RegisterTypedClient<IAppClient, AppClient>(services);
+        RegisterTypedClient<ILanguageClient, LanguageClient>(services);
+        RegisterTypedClient<IFontClient, FontClient>(services);
+        RegisterTypedClient<ILicenseClient, LicenseClient>(services);
+        RegisterTypedClient<IOrganizationClient, OrganizationClient>(services);
+        RegisterTypedClient<IImageClient, ImageClient>(services);
+        RegisterTypedClient<IVerseOfTheDayClient, VerseOfTheDayClient>(services);
+        RegisterTypedClient<IPermissionClient, PermissionClient>(services, PermissionClientName);
+        RegisterTypedClient<ISearchClient, SearchClient>(services);
 
         return services;
     }
@@ -168,10 +196,13 @@ public static class ServiceCollectionExtensions
             .AddHttpMessageHandler<OutboundRateLimitingHandler>()
             .AddStandardResilienceHandler();
 
-        // Append OAuthBearerTokenHandler to IHighlightClient's existing pipeline
-        // (AppKeyDelegatingHandler was already added by AddBibleApiClients).
+        // Append OAuthBearerTokenHandler to IHighlightClient's and IPermissionClient's existing
+        // pipelines (AppKeyDelegatingHandler was already added by AddBibleApiClients).
         // AddBibleApiClients MUST be called first.
         services.AddHttpClient(HighlightClientName)
+            .AddHttpMessageHandler<OAuthBearerTokenHandler>();
+
+        services.AddHttpClient(PermissionClientName)
             .AddHttpMessageHandler<OAuthBearerTokenHandler>();
 
         return services;

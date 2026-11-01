@@ -13,6 +13,15 @@ for parsing scripture references such as `Reference` and `VerseRange`.
 - `IBibleClient` for Bible discovery, version metadata, and book/chapter/verse structure.
 - `IPassageClient` for passage text/HTML retrieval.
 - `IHighlightClient` for highlight read/write operations (get per-passage, recent colors, create-or-update, clear).
+- `IAppClient` for app metadata.
+- `ILanguageClient` for language discovery and metadata.
+- `IFontClient` for font listing, metadata, and stylesheets.
+- `ILicenseClient` for Bible content licenses.
+- `IOrganizationClient` for publisher/organization metadata and their Bible versions.
+- `IImageClient` for verse-art image discovery and metadata.
+- `IVerseOfTheDayClient` for the platform's verse-of-the-day calendar.
+- `IPermissionClient` for the permissions a signed-in user has granted to an app (requires OAuth).
+- `ISearchClient` for query suggestions and unified/topic/verse/image search.
 - `IBibleOAuthClient` for authorization-code + PKCE OAuth flow.
 - `ITokenProvider` (default: `InMemoryTokenProvider`) for token persistence.
 - Built-in `HttpClient` resilience and outbound rate limiting.

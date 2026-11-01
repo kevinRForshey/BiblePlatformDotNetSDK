@@ -6,8 +6,11 @@ without any UI framework — just `Platform.API` + `Platform.API.Models` wired u
 services, scripts, Azure Functions, etc.
 
 Unlike [`PlatformTestApp`](../PlatformTestApp/README.md) (a Blazor Server app showing the full
-component/OAuth stack), this sample only exercises the raw API clients: listing Bible versions,
-listing a version's books, and fetching a single passage.
+component/OAuth stack), this sample only exercises the raw, unauthenticated API clients: Bibles,
+Passages, Languages, Fonts, Licenses, Organizations, Images, Verse of the Day, and Search.
+(`IAppClient` and `IPermissionClient` aren't exercised here — the former needs a specific app id
+to look up, and the latter needs an authenticated/OAuth caller, which is out of scope for this
+sample; see `PlatformTestApp` for the OAuth flow.)
 
 ## Running it
 
@@ -39,6 +42,13 @@ dotnet run --project PlatformConsoleSample
 | List Bible versions | `IBibleClient.GetVersionsAsync` |
 | List a version's books | `IBibleClient.GetBooksAsync` |
 | Fetch a passage | `IPassageClient.GetPassageAsync`, using `Reference.FromString` from `BiblePlatform.UsfmReferences` |
+| List languages | `ILanguageClient.GetLanguagesAsync` |
+| List font families | `IFontClient.GetFontsAsync` |
+| List a version's licenses | `ILicenseClient.GetLicensesAsync` |
+| List organizations | `IOrganizationClient.GetOrganizationsAsync` |
+| List verse-art images for a passage | `IImageClient.GetImagesAsync` |
+| Get today's verse of the day | `IVerseOfTheDayClient.GetVerseOfTheDayAsync` |
+| Search verses by keyword | `ISearchClient.SearchVersesAsync` |
 
 DI wiring is a single call — `AddBibleApiClients(builder.Configuration)` — since this sample
 doesn't need OAuth or caching. See [`Platform.API/README.md`](../Platform.API/README.md) for the

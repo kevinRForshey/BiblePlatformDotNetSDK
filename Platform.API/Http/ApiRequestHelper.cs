@@ -45,9 +45,27 @@ internal static class ApiRequestHelper
         string relativeUrl,
         ILogger logger,
         CancellationToken cancellationToken)
+        => await GetJsonAsync<T>(httpClient, relativeUrl, logger, cancellationToken, configureRequest: null)
+            .ConfigureAwait(false);
+
+    /// <summary>
+    /// Issues a GET to <paramref name="relativeUrl"/>, checks for success, and
+    /// deserializes the JSON body as <typeparamref name="T"/>. Use
+    /// <paramref name="configureRequest"/> to set per-request headers (e.g.
+    /// <c>Accept-Language</c>) that can't be set once on the shared, pooled <see cref="HttpClient"/>.
+    /// </summary>
+    internal static async Task<T?> GetJsonAsync<T>(
+        HttpClient httpClient,
+        string relativeUrl,
+        ILogger logger,
+        CancellationToken cancellationToken,
+        Action<HttpRequestMessage>? configureRequest)
     {
+        using var request = new HttpRequestMessage(HttpMethod.Get, relativeUrl);
+        configureRequest?.Invoke(request);
+
         using var response = await httpClient
-            .GetAsync(relativeUrl, cancellationToken)
+            .SendAsync(request, cancellationToken)
             .ConfigureAwait(false);
 
         await EnsureSuccessAsync(response, relativeUrl, logger, cancellationToken).ConfigureAwait(false);

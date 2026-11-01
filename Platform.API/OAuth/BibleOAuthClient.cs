@@ -78,7 +78,7 @@ internal sealed class BibleOAuthClient : IBibleOAuthClient
             {
                 if (string.IsNullOrWhiteSpace(permission))
                     continue;
-                query.Append("&requested_permissions="); query.Append(Uri.EscapeDataString(permission));
+                query.Append("&requested_permissions[]="); query.Append(Uri.EscapeDataString(permission));
             }
         }
 
@@ -135,35 +135,19 @@ internal sealed class BibleOAuthClient : IBibleOAuthClient
     }
 
     /// <inheritdoc />
-    public async Task<OAuthTokenResponse> CompleteIdentityCallbackAsync(
+    public async Task<AuthorizationCallbackResult> CompleteAuthorizationCallbackAsync(
         string state,
-        string yvpId,
-        string? userName,
-        string? userEmail,
-        string? profilePicture,
         string codeVerifier,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(state))
             throw new ArgumentException("State is required.", nameof(state));
-        if (string.IsNullOrWhiteSpace(yvpId))
-            throw new ArgumentException("yvp_id is required.", nameof(yvpId));
         if (string.IsNullOrWhiteSpace(codeVerifier))
             throw new ArgumentException("PKCE code verifier is required.", nameof(codeVerifier));
 
-        _logger.LogDebug("Exchanging identity callback for an authorization code.");
+        _logger.LogDebug("Replaying state to the auth callback endpoint to obtain an authorization code.");
 
-        var query = new StringBuilder();
-        query.Append("?state=").Append(Uri.EscapeDataString(state));
-        query.Append("&yvp_id=").Append(Uri.EscapeDataString(yvpId));
-        if (!string.IsNullOrWhiteSpace(userName))
-            query.Append("&user_name=").Append(Uri.EscapeDataString(userName));
-        if (!string.IsNullOrWhiteSpace(userEmail))
-            query.Append("&user_email=").Append(Uri.EscapeDataString(userEmail));
-        if (!string.IsNullOrWhiteSpace(profilePicture))
-            query.Append("&profile_picture=").Append(Uri.EscapeDataString(profilePicture));
-
-        var url = _options.AuthCallbackEndpoint + query.ToString();
+        var url = $"{_options.AuthCallbackEndpoint}?state={Uri.EscapeDataString(state)}";
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         using var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
 
@@ -174,25 +158,30 @@ internal sealed class BibleOAuthClient : IBibleOAuthClient
         {
             var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
             _logger.LogError(
-                "Identity callback exchange failed with HTTP {StatusCode} {ReasonPhrase} and no Location header. Response body: {Body}",
+                "Auth callback exchange failed with HTTP {StatusCode} {ReasonPhrase} and no Location header. Response body: {Body}",
                 (int)response.StatusCode, response.ReasonPhrase, body);
             throw new BibleApiException(
                 response.StatusCode,
-                $"Identity callback exchange failed with status {(int)response.StatusCode} ({response.ReasonPhrase}) and no redirect to follow.",
+                $"Auth callback exchange failed with status {(int)response.StatusCode} ({response.ReasonPhrase}) and no redirect to follow.",
                 body);
         }
 
-        var location = response.Headers.Location.IsAbsoluteUri
-            ? response.Headers.Location
-            : new Uri(response.RequestMessage!.RequestUri!, response.Headers.Location);
+        var location = ResolveLocation(response);
+        var parameters = ParseQueryString(location.Query);
 
-        var code = FirstOrDefault(ParseQueryString(location.Query), "code");
+        var code = FirstOrDefault(parameters, "code");
         if (string.IsNullOrWhiteSpace(code))
             throw new BibleEmptyResponseException(
                 "The auth callback endpoint's redirect did not include an authorization code.");
 
-        _logger.LogDebug("Identity callback exchange succeeded; redeeming the authorization code.");
-        return await ExchangeCodeAsync(code, codeVerifier, cancellationToken).ConfigureAwait(false);
+        _logger.LogDebug("Auth callback exchange succeeded; redeeming the authorization code.");
+        var token = await ExchangeCodeAsync(code, codeVerifier, cancellationToken).ConfigureAwait(false);
+
+        return new AuthorizationCallbackResult
+        {
+            Token = token,
+            GrantedPermissions = ExtractPermissionsOrNull(parameters, "granted_permissions"),
+        };
     }
 
     /// <inheritdoc />
@@ -303,7 +292,7 @@ internal sealed class BibleOAuthClient : IBibleOAuthClient
         {
             if (string.IsNullOrWhiteSpace(permission))
                 continue;
-            query.Append("&requested_permissions=").Append(Uri.EscapeDataString(permission));
+            query.Append("&requested_permissions[]=").Append(Uri.EscapeDataString(permission));
         }
 
         if (!string.IsNullOrWhiteSpace(state))
@@ -353,9 +342,7 @@ internal sealed class BibleOAuthClient : IBibleOAuthClient
                 body);
         }
 
-        var location = response.Headers.Location.IsAbsoluteUri
-            ? response.Headers.Location
-            : new Uri(response.RequestMessage!.RequestUri!, response.Headers.Location);
+        var location = ResolveLocation(response);
 
         var result = ParseDataExchangeCallback(location);
         _logger.LogInformation("Data exchange approval completed with status {Status}.", result.Status);
@@ -402,14 +389,29 @@ internal sealed class BibleOAuthClient : IBibleOAuthClient
     }
 
     private static IReadOnlyList<string> ExtractPermissions(Dictionary<string, List<string>> parameters, string key)
+        => ExtractPermissionsOrNull(parameters, key) ?? [];
+
+    /// <summary>
+    /// Like <see cref="ExtractPermissions"/>, but returns <see langword="null"/> when
+    /// <paramref name="key"/> is absent entirely, instead of collapsing "absent" and "present but
+    /// empty" to the same empty list. Callers that need to distinguish "not requested" from
+    /// "requested and denied" (see <see cref="AuthorizationCallbackResult.GrantedPermissions"/>)
+    /// need that distinction preserved.
+    /// </summary>
+    private static IReadOnlyList<string>? ExtractPermissionsOrNull(Dictionary<string, List<string>> parameters, string key)
     {
         if (!parameters.TryGetValue(key, out var values))
-            return [];
+            return null;
 
         return values
             .SelectMany(v => v.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             .ToList();
     }
+
+    private static Uri ResolveLocation(HttpResponseMessage response) =>
+        response.Headers.Location!.IsAbsoluteUri
+            ? response.Headers.Location
+            : new Uri(response.RequestMessage!.RequestUri!, response.Headers.Location);
 
     private static string? FirstOrDefault(Dictionary<string, List<string>> parameters, string key)
         => parameters.TryGetValue(key, out var values) ? values.FirstOrDefault() : null;
