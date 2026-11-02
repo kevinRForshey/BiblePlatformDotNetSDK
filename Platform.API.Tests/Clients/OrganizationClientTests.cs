@@ -58,11 +58,43 @@ public sealed class OrganizationClientTests
 
         await client.GetOrganizationsAsync(bibleIds: [111, 206], pageToken: "tok", pageSize: 5);
 
-        var query = handler.LastRequest!.RequestUri!.Query;
-        query.Should().Contain("bible_ids[]=111");
-        query.Should().Contain("bible_ids[]=206");
-        query.Should().Contain("page_token=tok");
-        query.Should().Contain("page_size=5");
+        handler.LastRequest!.RequestUri!.PathAndQuery.Should()
+            .Be("/v1/organizations?bible_ids[]=111&bible_ids[]=206&page_token=tok&page_size=5");
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    public async Task GetOrganizationsAsync_ThrowsArgumentException_WhenPageTokenIsEmptyOrWhitespace(string pageToken)
+    {
+        var client = BuildClient(HttpStatusCode.OK, """{"data": []}""");
+        var act = () => client.GetOrganizationsAsync(pageToken: pageToken);
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithParameterName("pageToken")
+            .WithMessage("*empty or whitespace*");
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task GetOrganizationsAsync_ThrowsArgumentOutOfRangeException_WhenPageSizeIsNotPositive(int pageSize)
+    {
+        var client = BuildClient(HttpStatusCode.OK, """{"data": []}""");
+        var act = () => client.GetOrganizationsAsync(pageSize: pageSize);
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>()
+            .WithParameterName("pageSize")
+            .WithMessage("*greater than zero*");
+    }
+
+    [Fact]
+    public async Task GetOrganizationsAsync_AppliesAcceptLanguageHeader_WhenProvided()
+    {
+        var handler = new FakeHttpMessageHandler(HttpStatusCode.OK, """{"data": []}""");
+        var client = BuildClientFromHandler(handler);
+
+        await client.GetOrganizationsAsync(acceptLanguage: "es");
+
+        handler.LastRequest!.Headers.AcceptLanguage.ToString().Should().Be("es");
     }
 
     [Theory]
@@ -104,7 +136,9 @@ public sealed class OrganizationClientTests
     {
         var client = BuildClient(HttpStatusCode.OK, OrganizationJson);
         var act = () => client.GetOrganizationAsync(organizationId);
-        await act.Should().ThrowAsync<ArgumentException>();
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithParameterName("organizationId")
+            .WithMessage("*is required*");
     }
 
     [Fact]
@@ -112,7 +146,19 @@ public sealed class OrganizationClientTests
     {
         var client = BuildClient(HttpStatusCode.OK, "null");
         var act = () => client.GetOrganizationAsync("org-1");
-        await act.Should().ThrowAsync<BibleEmptyResponseException>();
+        await act.Should().ThrowAsync<BibleEmptyResponseException>()
+            .WithMessage("*org-1*");
+    }
+
+    [Fact]
+    public async Task GetOrganizationAsync_AppliesAcceptLanguageHeader_WhenProvided()
+    {
+        var handler = new FakeHttpMessageHandler(HttpStatusCode.OK, OrganizationJson);
+        var client = BuildClientFromHandler(handler);
+
+        await client.GetOrganizationAsync("org-1", acceptLanguage: "es");
+
+        handler.LastRequest!.Headers.AcceptLanguage.ToString().Should().Be("es");
     }
 
     [Fact]
@@ -155,6 +201,66 @@ public sealed class OrganizationClientTests
         await client.GetOrganizationBiblesAsync("org-1");
 
         handler.LastRequest!.RequestUri!.AbsolutePath.Should().Be("/v1/organizations/org-1/bibles");
+    }
+
+    [Fact]
+    public async Task GetOrganizationBiblesAsync_BuildsExpectedQueryString_WithPageTokenAndPageSize()
+    {
+        var handler = new FakeHttpMessageHandler(HttpStatusCode.OK, """{"data": []}""");
+        var client = BuildClientFromHandler(handler);
+
+        await client.GetOrganizationBiblesAsync("org-1", pageToken: "tok2", pageSize: 7);
+
+        handler.LastRequest!.RequestUri!.PathAndQuery.Should()
+            .Be("/v1/organizations/org-1/bibles?page_token=tok2&page_size=7");
+    }
+
+    [Fact]
+    public async Task GetOrganizationBiblesAsync_BuildsExpectedQueryString_WithPageSizeOnly()
+    {
+        var handler = new FakeHttpMessageHandler(HttpStatusCode.OK, """{"data": []}""");
+        var client = BuildClientFromHandler(handler);
+
+        await client.GetOrganizationBiblesAsync("org-1", pageSize: 7);
+
+        handler.LastRequest!.RequestUri!.PathAndQuery.Should()
+            .Be("/v1/organizations/org-1/bibles?page_size=7");
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    public async Task GetOrganizationBiblesAsync_ThrowsArgumentException_WhenOrganizationIdIsInvalid(string organizationId)
+    {
+        var client = BuildClient(HttpStatusCode.OK, """{"data": []}""");
+        var act = () => client.GetOrganizationBiblesAsync(organizationId);
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithParameterName("organizationId")
+            .WithMessage("*is required*");
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    public async Task GetOrganizationBiblesAsync_ThrowsArgumentException_WhenPageTokenIsEmptyOrWhitespace(string pageToken)
+    {
+        var client = BuildClient(HttpStatusCode.OK, """{"data": []}""");
+        var act = () => client.GetOrganizationBiblesAsync("org-1", pageToken: pageToken);
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithParameterName("pageToken")
+            .WithMessage("*empty or whitespace*");
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task GetOrganizationBiblesAsync_ThrowsArgumentOutOfRangeException_WhenPageSizeIsNotPositive(int pageSize)
+    {
+        var client = BuildClient(HttpStatusCode.OK, """{"data": []}""");
+        var act = () => client.GetOrganizationBiblesAsync("org-1", pageSize: pageSize);
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>()
+            .WithParameterName("pageSize")
+            .WithMessage("*greater than zero*");
     }
 
     private static OrganizationClient BuildClient(HttpStatusCode status, string json)

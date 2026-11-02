@@ -39,3 +39,12 @@ shape (`yv:index:{versionId}`) to reason about instead of four.
 - The in-memory `BibleIndexMapper` projection work happens on every call, cache hit or not —
   `Platform.API.Benchmarks/CachingBibleClientBenchmarks` and `BibleIndexMapperBenchmarks` exist to keep
   that cost visible as the mapping logic evolves.
+- `BibleCacheOptions` has one TTL field per cache-key shape (`VersionsTtl` for `yv:versions:*`/
+  `yv:version:*`, `BooksTtl` for `yv:index:*`, `PassageTtl` for `yv:passage:*`), not one per client
+  method — this follows directly from the single-cache-key-per-version design above. Until
+  2026-11-01 this mapping had **zero** test coverage (confirmed by mutation testing: both
+  `CachingBibleClient.cs` and `CachingPassageClient.cs` scored 0%, every mutant `NoCoverage`), and
+  `GetIndexAsync` was silently wired to `VersionsTtl` instead of `BooksTtl`, making `BooksTtl` dead
+  config. `CachingBibleClientTests`/`CachingPassageClientTests` now assert cache-hit/miss behavior
+  per method and, via the `FakeHybridCache` test double, which TTL field backs which cache key — any
+  future TTL/key mismatch now fails a test instead of silently no-op'ing a config field.

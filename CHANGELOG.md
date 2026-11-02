@@ -7,12 +7,87 @@ git tags (see `README.md` — "Versioning & Releases").
 ## [Unreleased]
 
 ### Added
+- `specs/` — versioned, verified records of the platform's actual wire contract (as opposed to
+  `docs/adr/`'s records of decisions this repo made), starting with
+  `0001-oauth-signin-and-data-exchange.md`. Added in response to the `requested_permissions[]`
+  and `granted_permissions`-hop bugs below, both of which shipped past a fully green test suite
+  because nothing encoded the platform's actual observed behavior as a checked assertion.
+- `PlatformTestApp.Tests/Auth/OAuthCallbackHandlersTests.cs` — the OAuth callback dispatch logic
+  in `OAuthCallbackHandlers.cs` had no test coverage at all before this; now covers all four
+  callback shapes, including a regression test for the `granted_permissions`-hop bug below.
+- `docs/adr/0006-no-services-wrapper-for-newer-categories.md` — records, as a deliberate decision
+  rather than a gap, that the nine newer API categories intentionally ship client-only with no
+  `Platform.SDK.Services` wrapper.
 - Clients for the nine remaining Bible Platform API categories that had no .NET coverage:
   `IAppClient`, `ILanguageClient`, `IFontClient`, `ILicenseClient`, `IOrganizationClient`,
   `IImageClient`, `IVerseOfTheDayClient`, `IPermissionClient` (OAuth-authenticated), and
   `ISearchClient` (query suggestions, unified/topic/verse/image search). Registered via
   `AddBibleApiClients`/`AddBibleOAuth` alongside the existing Bible/Passage/Highlight clients, with
   matching models in `Platform.API.Models`.
+
+- Mutation-testing coverage (via Stryker.NET) for the files it previously found weakest:
+  `CachingBibleClientTests`/`CachingPassageClientTests` (new; both decorators were previously at
+  0% mutation score, every mutant `NoCoverage`) and an expanded `OAuthClientTests` covering
+  `BibleOAuthClient`'s redirect-uri/scope wiring, `BuildDirectDataExchangeUrl` (previously almost
+  entirely untested), the Data Exchange approval's status/Location check, and query-string
+  parsing edge cases. `BibleOAuthClient.cs`'s mutation score moved from 52.27% to 67.05%; see
+  `docs/adr/0002-caching-decorator-over-hybridcache.md` for the caching-side fix this also
+  uncovered. Project-wide mutation score moved from 48.89% to 53.99% as a result. Also added a
+  full `ServiceCollectionExtensionsTests` suite (client registration for all twelve typed clients,
+  both `AddBibleApiClients` overloads, `AddBibleOAuth` null checks/options propagation/handler
+  pipeline, and a previously-untested `AddBibleCaching`), moving `ServiceCollectionExtensions.cs`
+  from 28.21% to 89.74% (the remaining survivors are confirmed-equivalent mutants — see commit
+  history for the empirical verification). `FontClientTests` likewise grew to cover the
+  `GetFontsAsync` request path and its null-body fallback, the exception messages both guard
+  clauses produce, and — the one real bug risk the gap analysis surfaced — `GetStylesheetAsync`'s
+  `fontId <= 0` guard, which had no test at all, leaving its boundary and its throw uncovered.
+  `FontClient.cs` moved from 30.30% to 51.52%; every mutant that survives it is now either a
+  `logger.LogDebug` template/statement mutation or `ConfigureAwait(false)` → `(true)`, neither of
+  which is observable behavior in this codebase (all tests use `NullLogger`, and no host here
+  installs a `SynchronizationContext`). Added `ApiRequestHelperTests.cs` — the shared
+  `EnsureSuccessAsync`/`GetJsonAsync` helper every typed client calls through had no dedicated
+  test file and relied entirely on incidental coverage from individual client tests; the new
+  tests assert directly on the error-path `BibleApiException`'s status code, message text, and
+  response body, and on the `configureRequest` overload actually applying per-request headers
+  (e.g. `Accept-Language`) before the request is sent. `ApiRequestHelper.cs` moved from 33.33% to
+  41.67%; the remaining survivors are the same two established non-issues (`ConfigureAwait`
+  true/false equivalence and unasserted `logger.LogError` calls). `HighlightClientTests` grew to
+  cover the null-passage/null-color guard clauses across `GetHighlightsAsync`,
+  `CreateOrUpdateHighlightAsync`, and `ClearHighlightsAsync`; the null-body-returns-empty-list
+  fallback for `GetHighlightsAsync`/`GetRecentColorsAsync`; the previously `NoCoverage`
+  `BibleEmptyResponseException` thrown when `CreateOrUpdateHighlightAsync` gets an empty response
+  body; and the previously `NoCoverage` `ToNormalizedUsfm` catch block, which wraps a
+  `Reference.ToString()` failure as a `BibleApiException` — confirmed reachable (not
+  defensive/dead code) via `Reference.FromString("GEN")`, a book-only reference whose `ToString()`
+  throws `InvalidOperationException` by its own documented contract. `HighlightClient.cs` moved
+  from 40.35% to 63.16%; the remaining survivors are the same two established non-issues.
+  `OrganizationClientTests` grew to cover the previously-untested `pageToken`/`pageSize` guard
+  clauses across all three methods (including the `pageSize == 0` boundary, which a weaker `< 0`
+  check would have let through), the `Accept-Language` header actually being attached when
+  provided, and exact (not just substring) query-string assertions for `GetOrganizationsAsync`'s
+  and `GetOrganizationBiblesAsync`'s URL builders — the prior substring (`.Contain(...)`)
+  assertions let query-separator bugs (`?` vs `&` placement) survive undetected.
+  `OrganizationClient.cs` moved from 44.09% to 84.95%; the lone non-logging/non-ConfigureAwait
+  survivor (`BuildOrganizationBiblesUrl`'s first separator check) is a mathematically equivalent
+  mutant — `hasQuery` is provably `false` at that call site on every reachable path, since it's
+  the first possible separator-insertion point in the method. Added a dedicated
+  `OAuthTokenResponseTests.cs`, consolidating and extending the handful of `OAuthTokenResponse`
+  tests that previously lived incidentally inside `OAuthClientTests.cs`: direct tests for
+  `IsExpired`'s JWT-`exp`-claim fallback path, including which of `IdToken`/`AccessToken` takes
+  precedence when both carry an `exp` claim and the buffer-seconds boundary around it; the
+  previously `NoCoverage` early-return when `AccessToken` is null/empty/whitespace; and full
+  precedence coverage for the 4-way claim-fallback chains in `GetUserName()`, `GetEmail()`, and
+  `GetDisplayIdentity()` (each claim source tested in isolation plus the priority ordering between
+  adjacent sources, since none of those branches had dedicated tests before — only incidental,
+  partial coverage via two higher-level `GetDisplayIdentity` tests). `OAuthTokenResponse.cs` moved
+  from 33.90% to 96.61%; the only two survivors are `>=` → `>` equality mutations on the two
+  expiration-boundary comparisons, both empirically confirmed equivalent — `DateTimeOffset.UtcNow`
+  is a live, monotonically-advancing clock with no injectable abstraction in this type, so by the
+  time it's read inside `IsExpired`, it has always already advanced strictly past any
+  previously-computed threshold, making exact equality unreachable in a real test. Remaining weak
+  spots are concentrated in `OAuthBearerTokenHandler.cs` (~39%), `InMemoryTokenProvider.cs`
+  (~42%), `VerseOfTheDayClient.cs` (~44%), `AppClient.cs` (~46%), and `PermissionClient.cs` (50%)
+  — not yet addressed.
 
 ### Changed
 - Relicensed from MIT to Apache License 2.0 (all five packages, including
@@ -26,6 +101,10 @@ git tags (see `README.md` — "Versioning & Releases").
   the "Enforce coverage floor" step in `.github/workflows/ci.yml`.
 
 ### Fixed
+- `CachingBibleClient.GetIndexAsync` (backing `GetBooksAsync`/`GetChaptersAsync`/`GetVersesAsync`)
+  was wired to `BibleCacheOptions.VersionsTtl` instead of `BooksTtl`, making `BooksTtl` dead
+  config. Found via mutation testing — both caching decorators had zero test coverage before this.
+  See `docs/adr/0002-caching-decorator-over-hybridcache.md`.
 - `IBibleOAuthClient.CompleteIdentityCallbackAsync` sent identity fields (`yvp_id`, `user_name`,
   `user_email`, `profile_picture`) from the OAuth callback redirect back to the platform to
   retrieve a code. Following the platform's 2026-07-20/21 sign-in change, the callback redirect no

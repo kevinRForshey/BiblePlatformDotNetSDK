@@ -12,19 +12,22 @@ namespace Platform.API.Tests.Fakes;
 /// </summary>
 internal sealed class FakeHttpMessageHandler : HttpMessageHandler
 {
-    private readonly HttpResponseMessage _response;
+    private readonly HttpStatusCode _statusCode;
+    private readonly string _jsonBody;
+    private readonly Action<HttpResponseMessage>? _configureResponse;
 
     public FakeHttpMessageHandler(HttpStatusCode statusCode, string jsonBody, Action<HttpResponseMessage>? configureResponse = null)
     {
-        _response = new HttpResponseMessage(statusCode)
-        {
-            Content = new StringContent(jsonBody, Encoding.UTF8, "application/json")
-        };
-        configureResponse?.Invoke(_response);
+        _statusCode = statusCode;
+        _jsonBody = jsonBody;
+        _configureResponse = configureResponse;
     }
 
     /// <summary>The last request received by this handler.</summary>
     public HttpRequestMessage? LastRequest { get; private set; }
+
+    /// <summary>The number of requests this handler has received.</summary>
+    public int RequestCount { get; private set; }
 
     /// <summary>
     /// The last request's content, read eagerly since the caller may dispose its
@@ -36,15 +39,17 @@ internal sealed class FakeHttpMessageHandler : HttpMessageHandler
         HttpRequestMessage request,
         CancellationToken cancellationToken)
     {
+        RequestCount++;
         LastRequest = request;
         LastRequestBody = request.Content is null
             ? null
             : await request.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        return _response;
-    }
 
-    protected override void Dispose(bool disposing)
-    {
-        // Do not dispose _response here; callers hold it through the lifetime of the test.
+        var response = new HttpResponseMessage(_statusCode)
+        {
+            Content = new StringContent(_jsonBody, Encoding.UTF8, "application/json")
+        };
+        _configureResponse?.Invoke(response);
+        return response;
     }
 }
