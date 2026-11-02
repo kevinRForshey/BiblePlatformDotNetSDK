@@ -16,3 +16,4 @@ record should say so and link to the one that replaces it.
 | [0003](0003-client-side-token-bucket-rate-limiting.md) | Client-side token-bucket rate limiting via a `DelegatingHandler` | Accepted |
 | [0004](0004-unofficial-package-naming-and-minver-versioning.md) | "Unofficial" package naming and git-tag-derived versioning | Accepted |
 | [0005](0005-authsession-abstraction-over-raw-oauth-tokens.md) | `AuthSession`/`IAuthSessionService` abstraction over raw OAuth tokens | Accepted |
+| [0006](0006-no-services-wrapper-for-newer-categories.md) | No `Platform.SDK.Services` wrapper for the nine newer API categories | Accepted |

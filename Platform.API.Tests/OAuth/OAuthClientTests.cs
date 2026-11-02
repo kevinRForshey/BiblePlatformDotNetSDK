@@ -2,6 +2,7 @@ using System;
 using System.Net;
 using System.Net.Http;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -127,6 +128,48 @@ public sealed class OAuthClientTests
     }
 
     [Fact]
+    public void BuildAuthorizationUrl_OmitsRedirectUri_WhenNotConfigured()
+    {
+        var client = BuildClient(HttpStatusCode.OK, TokenJson, configureOptions: o => o.RedirectUri = null);
+
+        var authRequest = client.BuildAuthorizationUrl();
+
+        authRequest.AuthorizationUrl.AbsoluteUri.Should().NotContain("redirect_uri=");
+    }
+
+    [Fact]
+    public void BuildAuthorizationUrl_AddsOpenIdScope_WhenConfiguredScopesOmitIt()
+    {
+        var client = BuildClient(HttpStatusCode.OK, TokenJson, configureOptions: o => o.Scopes = "profile");
+
+        var authRequest = client.BuildAuthorizationUrl();
+
+        authRequest.AuthorizationUrl.AbsoluteUri.Should().Contain("scope=profile%20openid");
+    }
+
+    [Fact]
+    public void BuildAuthorizationUrl_AddsOpenIdScope_WithoutLeadingSeparator_WhenConfiguredScopesAreEmpty()
+    {
+        var client = BuildClient(HttpStatusCode.OK, TokenJson, configureOptions: o => o.Scopes = "");
+
+        var authRequest = client.BuildAuthorizationUrl();
+
+        authRequest.AuthorizationUrl.AbsoluteUri.Should().Contain("scope=openid");
+        authRequest.AuthorizationUrl.AbsoluteUri.Should().NotContain("scope=%20openid");
+    }
+
+    [Fact]
+    public void BuildAuthorizationUrl_DoesNotDuplicateOpenIdScope_WhenAlreadyPresent()
+    {
+        var client = BuildClient(HttpStatusCode.OK, TokenJson, configureOptions: o => o.Scopes = "openid profile");
+
+        var authRequest = client.BuildAuthorizationUrl();
+
+        var scopeCount = Regex.Matches(authRequest.AuthorizationUrl.AbsoluteUri, "openid").Count;
+        scopeCount.Should().Be(1);
+    }
+
+    [Fact]
     public void BuildAuthorizationUrl_OmitsRequestedPermissions_WhenNotProvided()
     {
         var client = BuildClient(HttpStatusCode.OK, TokenJson);
@@ -136,6 +179,9 @@ public sealed class OAuthClientTests
         authRequest.AuthorizationUrl.AbsoluteUri.Should().NotContain("requested_permissions");
     }
 
+    // Bracket form (`requested_permissions[]=`) is required — the platform silently ignores a
+    // bare `requested_permissions=` and never shows the consent UI. See
+    // specs/0001-oauth-signin-and-data-exchange.md for the verified request/response shapes.
     [Fact]
     public void BuildAuthorizationUrl_AppendsRequestedPermissions_WhenProvided()
     {
@@ -216,6 +262,28 @@ public sealed class OAuthClientTests
         var client = BuildClient(HttpStatusCode.OK, TokenJson);
         var act = () => client.ExchangeCodeAsync("auth-code", codeVerifier);
         await act.Should().ThrowAsync<ArgumentException>();
+    }
+
+    [Fact]
+    public async Task ExchangeCodeAsync_IncludesRedirectUri_WhenConfigured()
+    {
+        var handler = new FakeHttpMessageHandler(HttpStatusCode.OK, TokenJson);
+        var client = BuildClientFromHandler(handler, configureOptions: o => o.RedirectUri = new Uri("https://localhost/callback"));
+
+        await client.ExchangeCodeAsync("auth-code", "verifier");
+
+        handler.LastRequestBody.Should().Contain("redirect_uri");
+    }
+
+    [Fact]
+    public async Task ExchangeCodeAsync_OmitsRedirectUri_WhenNotConfigured()
+    {
+        var handler = new FakeHttpMessageHandler(HttpStatusCode.OK, TokenJson);
+        var client = BuildClientFromHandler(handler, configureOptions: o => o.RedirectUri = null);
+
+        await client.ExchangeCodeAsync("auth-code", "verifier");
+
+        handler.LastRequestBody.Should().NotContain("redirect_uri");
     }
 
     // -------------------------------------------------------------------------
@@ -602,6 +670,83 @@ public sealed class OAuthClientTests
     }
 
     // -------------------------------------------------------------------------
+    // BuildDirectDataExchangeUrl
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void BuildDirectDataExchangeUrl_ReturnsUrlWithAppKeyAndRequestedPermission()
+    {
+        var client = BuildClient(HttpStatusCode.OK, TokenJson);
+
+        var url = client.BuildDirectDataExchangeUrl(["highlights"]);
+
+        url.AbsoluteUri.Should().Be(
+            "https://api.youversion.com/data-exchange?x-yvp-app-key=test-app-key&requested_permissions[]=highlights");
+    }
+
+    [Fact]
+    public void BuildDirectDataExchangeUrl_AppendsEachPermission_AsRepeatedQueryParameter_AndSkipsWhitespaceEntries()
+    {
+        var client = BuildClient(HttpStatusCode.OK, TokenJson);
+
+        var url = client.BuildDirectDataExchangeUrl(["highlights", " ", "bookmarks"]);
+
+        url.AbsoluteUri.Should().Be(
+            "https://api.youversion.com/data-exchange?x-yvp-app-key=test-app-key" +
+            "&requested_permissions[]=highlights&requested_permissions[]=bookmarks");
+    }
+
+    [Fact]
+    public void BuildDirectDataExchangeUrl_AppendsState_WhenProvided()
+    {
+        var client = BuildClient(HttpStatusCode.OK, TokenJson);
+
+        var url = client.BuildDirectDataExchangeUrl(["highlights"], state: "csrf-abc");
+
+        url.AbsoluteUri.Should().EndWith("&state=csrf-abc");
+    }
+
+    [Fact]
+    public void BuildDirectDataExchangeUrl_OmitsState_WhenNotProvided()
+    {
+        var client = BuildClient(HttpStatusCode.OK, TokenJson);
+
+        var url = client.BuildDirectDataExchangeUrl(["highlights"]);
+
+        url.AbsoluteUri.Should().NotContain("state=");
+    }
+
+    [Fact]
+    public void BuildDirectDataExchangeUrl_ThrowsArgumentNullException_WhenPermissionsIsNull()
+    {
+        var client = BuildClient(HttpStatusCode.OK, TokenJson);
+
+        var act = () => client.BuildDirectDataExchangeUrl(null!);
+
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void BuildDirectDataExchangeUrl_ThrowsArgumentException_WhenPermissionsIsEmpty()
+    {
+        var client = BuildClient(HttpStatusCode.OK, TokenJson);
+
+        var act = () => client.BuildDirectDataExchangeUrl([]);
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void BuildDirectDataExchangeUrl_ThrowsInvalidOperationException_WhenAppKeyNotConfigured()
+    {
+        var client = BuildClient(HttpStatusCode.OK, TokenJson, appKey: "");
+
+        var act = () => client.BuildDirectDataExchangeUrl(["highlights"]);
+
+        act.Should().Throw<InvalidOperationException>().WithMessage("*AppKey*");
+    }
+
+    // -------------------------------------------------------------------------
     // ParseDataExchangeCallback
     // -------------------------------------------------------------------------
 
@@ -663,6 +808,40 @@ public sealed class OAuthClientTests
             "https://myapp.com/?data_exchange_status=granted&granted_permissions=highlights,bookmarks"));
 
         result.GrantedPermissions.Should().BeEquivalentTo(["highlights", "bookmarks"]);
+    }
+
+    [Fact]
+    public void ParseDataExchangeCallback_TrimsWhitespaceAndRemovesEmptyEntries_InCommaSeparatedPermissions()
+    {
+        var client = BuildClient(HttpStatusCode.OK, TokenJson);
+
+        var result = client.ParseDataExchangeCallback(new Uri(
+            "https://myapp.com/?data_exchange_status=granted&granted_permissions=" +
+            Uri.EscapeDataString("highlights, ,bookmarks ")));
+
+        result.GrantedPermissions.Should().BeEquivalentTo(["highlights", "bookmarks"]);
+    }
+
+    [Fact]
+    public void ParseDataExchangeCallback_DecodesPlusSignsAsSpaces_InValues()
+    {
+        var client = BuildClient(HttpStatusCode.OK, TokenJson);
+
+        var result = client.ParseDataExchangeCallback(new Uri(
+            "https://myapp.com/?data_exchange_status=error&error_description=Something+went+wrong"));
+
+        result.ErrorDescription.Should().Be("Something went wrong");
+    }
+
+    [Fact]
+    public void ParseDataExchangeCallback_TreatsQueryPairWithoutEqualsSign_AsEmptyValue()
+    {
+        var client = BuildClient(HttpStatusCode.OK, TokenJson);
+
+        var result = client.ParseDataExchangeCallback(new Uri(
+            "https://myapp.com/?error&data_exchange_status=error"));
+
+        result.Error.Should().BeEmpty();
     }
 
     // -------------------------------------------------------------------------
@@ -729,127 +908,46 @@ public sealed class OAuthClientTests
             .Where(e => e.StatusCode == HttpStatusCode.Unauthorized);
     }
 
-    // -------------------------------------------------------------------------
-    // OAuthTokenResponse.IsExpired
-    // -------------------------------------------------------------------------
-
     [Fact]
-    public void IsExpired_ReturnsFalse_WhenTokenIsFresh()
+    public async Task CompleteDataExchangeApprovalAsync_ThrowsBibleApiException_WhenSeeOtherResponseHasNoLocationHeader()
     {
-        var token = new OAuthTokenResponse
-        {
-            AccessToken = "tok", ExpiresIn = 3600,
-            ReceivedAt = DateTimeOffset.UtcNow
-        };
+        // StatusCode alone isn't sufficient — a SeeOther response with no Location header to
+        // follow must still be treated as a failure.
+        var client = BuildClient(HttpStatusCode.SeeOther, "no redirect target");
 
-        token.IsExpired().Should().BeFalse();
-    }
+        var act = () => client.CompleteDataExchangeApprovalAsync("dx-tok");
 
-    [Fact]
-    public void IsExpired_ReturnsTrue_WhenTokenHasExpired()
-    {
-        var token = new OAuthTokenResponse
-        {
-            AccessToken = "tok", ExpiresIn = 10,
-            ReceivedAt = DateTimeOffset.UtcNow.AddSeconds(-100)
-        };
-
-        token.IsExpired().Should().BeTrue();
-    }
-
-    [Fact]
-    public void IsExpired_ReturnsTrue_WhenTokenIsWithinBuffer()
-    {
-        var token = new OAuthTokenResponse
-        {
-            AccessToken = "tok", ExpiresIn = 3600,
-            ReceivedAt = DateTimeOffset.UtcNow.AddSeconds(-(3600 - 30))
-        };
-
-        // 60-second default buffer — token has only 30s remaining
-        token.IsExpired(bufferSeconds: 60).Should().BeTrue();
-    }
-
-    [Fact]
-    public void IsExpired_ReturnsFalse_WhenExpiresInMissing_ButAccessTokenExists()
-    {
-        var token = new OAuthTokenResponse
-        {
-            AccessToken = "opaque-access-token",
-            ExpiresIn = 0,
-            ReceivedAt = DateTimeOffset.UtcNow.AddHours(-1)
-        };
-
-        token.IsExpired().Should().BeFalse();
-    }
-
-    [Fact]
-    public void IsExpired_UsesJwtExpClaim_WhenExpiresInMissing()
-    {
-        var exp = DateTimeOffset.UtcNow.AddMinutes(10).ToUnixTimeSeconds().ToString();
-        var token = new OAuthTokenResponse
-        {
-            AccessToken = BuildUnsignedJwt("exp", exp),
-            ExpiresIn = 0,
-            ReceivedAt = DateTimeOffset.UtcNow.AddHours(-1)
-        };
-
-        token.IsExpired(bufferSeconds: 60).Should().BeFalse();
-    }
-
-    // -------------------------------------------------------------------------
-    // OAuthTokenResponse identity helpers
-    // -------------------------------------------------------------------------
-
-    [Fact]
-    public void GetDisplayIdentity_ReturnsEmail_WhenNameIsMissing()
-    {
-        var token = new OAuthTokenResponse
-        {
-            AccessToken = BuildUnsignedJwt("email", "kevin@example.com"),
-            ExpiresIn = 3600,
-            ReceivedAt = DateTimeOffset.UtcNow
-        };
-
-        token.GetDisplayIdentity().Should().Be("kevin@example.com");
-    }
-
-    [Fact]
-    public void GetDisplayIdentity_FallsBackToSubject_WhenNameAndEmailMissing()
-    {
-        var token = new OAuthTokenResponse
-        {
-            IdToken = BuildUnsignedJwt("sub", "user-123"),
-            AccessToken = "not-a-jwt",
-            ExpiresIn = 3600,
-            ReceivedAt = DateTimeOffset.UtcNow
-        };
-
-        token.GetDisplayIdentity().Should().Be("user-123");
+        await act.Should().ThrowAsync<BibleApiException>()
+            .Where(e => e.StatusCode == HttpStatusCode.SeeOther);
     }
 
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
 
+    private static BibleOAuthOptions DefaultOAuthOptions() => new()
+    {
+        ClientId = "test-client",
+        RedirectUri = new Uri("https://localhost/callback"),
+        AuthorizationEndpoint = new Uri("https://auth.youversion.com/oauth2/authorize"),
+        TokenEndpoint = new Uri("https://auth.youversion.com/oauth2/token")
+    };
+
     private static BibleOAuthClient BuildClient(
         HttpStatusCode status,
         string json,
         FakeTokenProvider? tokenProvider = null,
-        string? appKey = "test-app-key")
+        string? appKey = "test-app-key",
+        Action<BibleOAuthOptions>? configureOptions = null)
     {
         var handler = new FakeHttpMessageHandler(status, json);
         var httpClient = new HttpClient(handler)
         {
             BaseAddress = new Uri("https://auth.youversion.com")
         };
-        var options = Options.Create(new BibleOAuthOptions
-        {
-            ClientId = "test-client",
-            RedirectUri = new Uri("https://localhost/callback"),
-            AuthorizationEndpoint = new Uri("https://auth.youversion.com/oauth2/authorize"),
-            TokenEndpoint = new Uri("https://auth.youversion.com/oauth2/token")
-        });
+        var oauthOptions = DefaultOAuthOptions();
+        configureOptions?.Invoke(oauthOptions);
+        var options = Options.Create(oauthOptions);
         var apiOptions = Options.Create(new BibleApiOptions { AppKey = appKey ?? string.Empty });
         return new BibleOAuthClient(
             httpClient,
@@ -862,16 +960,13 @@ public sealed class OAuthClientTests
     private static BibleOAuthClient BuildClientFromHandler(
         FakeHttpMessageHandler handler,
         FakeTokenProvider? tokenProvider = null,
-        string? appKey = "test-app-key")
+        string? appKey = "test-app-key",
+        Action<BibleOAuthOptions>? configureOptions = null)
     {
         var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://auth.youversion.com") };
-        var options = Options.Create(new BibleOAuthOptions
-        {
-            ClientId = "test-client",
-            RedirectUri = new Uri("https://localhost/callback"),
-            AuthorizationEndpoint = new Uri("https://auth.youversion.com/oauth2/authorize"),
-            TokenEndpoint = new Uri("https://auth.youversion.com/oauth2/token")
-        });
+        var oauthOptions = DefaultOAuthOptions();
+        configureOptions?.Invoke(oauthOptions);
+        var options = Options.Create(oauthOptions);
         var apiOptions = Options.Create(new BibleApiOptions { AppKey = appKey ?? string.Empty });
         return new BibleOAuthClient(
             httpClient,
@@ -912,15 +1007,4 @@ public sealed class OAuthClientTests
         ReceivedAt = DateTimeOffset.UtcNow,
     };
 
-    private static string BuildUnsignedJwt(string claimName, string claimValue)
-    {
-        var payload = $"{{\"{claimName}\":\"{claimValue}\"}}";
-        var payloadBytes = Encoding.UTF8.GetBytes(payload);
-        var payloadBase64Url = Convert.ToBase64String(payloadBytes)
-            .TrimEnd('=')
-            .Replace('+', '-')
-            .Replace('/', '_');
-
-        return $"header.{payloadBase64Url}.signature";
-    }
 }

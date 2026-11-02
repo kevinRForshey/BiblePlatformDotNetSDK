@@ -16,5 +16,12 @@ internal static class TestReferences
     
     /// <summary>John 3:16-17 verse range.</summary>
     public static Reference John316To17 => Reference.FromString("JHN.3.16-17");
+
+    /// <summary>
+    /// Book-only reference (no chapter, intro, or verses). Its <see cref="Reference.ToString"/>
+    /// throws <see cref="InvalidOperationException"/>, making it useful for exercising
+    /// normalization-failure paths.
+    /// </summary>
+    public static Reference BookOnly => Reference.FromString("GEN");
 }
 

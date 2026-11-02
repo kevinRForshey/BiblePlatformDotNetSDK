@@ -47,6 +47,27 @@ public sealed class FontClientTests
     }
 
     [Fact]
+    public async Task GetFontsAsync_RequestsExpectedPath()
+    {
+        var handler = new FakeHttpMessageHandler(HttpStatusCode.OK, $$"""{"data": [{{FontJson}}]}""");
+        var client = BuildClientFromHandler(handler);
+
+        await client.GetFontsAsync();
+
+        handler.LastRequest!.RequestUri!.AbsolutePath.Should().Be("/v1/fonts");
+    }
+
+    [Fact]
+    public async Task GetFontsAsync_ReturnsEmptyList_WhenBodyIsNull()
+    {
+        var client = BuildClient(HttpStatusCode.OK, "null");
+
+        var result = await client.GetFontsAsync();
+
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task GetFontAsync_ReturnsFont_WhenApiSucceeds()
     {
         var client = BuildClient(HttpStatusCode.OK, FontJson);
@@ -75,7 +96,9 @@ public sealed class FontClientTests
     {
         var client = BuildClient(HttpStatusCode.OK, FontJson);
         var act = () => client.GetFontAsync(fontId);
-        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>()
+            .WithParameterName("fontId")
+            .WithMessage("*greater than zero*");
     }
 
     [Theory]
@@ -92,8 +115,9 @@ public sealed class FontClientTests
     public async Task GetFontAsync_ThrowsBibleEmptyResponseException_WhenBodyIsNull()
     {
         var client = BuildClient(HttpStatusCode.OK, "null");
-        var act = () => client.GetFontAsync(1);
-        await act.Should().ThrowAsync<BibleEmptyResponseException>();
+        var act = () => client.GetFontAsync(7);
+        await act.Should().ThrowAsync<BibleEmptyResponseException>()
+            .WithMessage("*Font 7*");
     }
 
     [Fact]
@@ -110,6 +134,22 @@ public sealed class FontClientTests
 
         result.Should().Be(css);
         handler.LastRequest!.RequestUri!.AbsolutePath.Should().Be("/v1/fonts/1/stylesheet");
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task GetStylesheetAsync_ThrowsArgumentOutOfRangeException_WhenFontIdIsInvalid(int fontId)
+    {
+        var handler = new FakeHttpMessageHandler(HttpStatusCode.OK, "@font-face {}");
+        var client = BuildClientFromHandler(handler);
+
+        var act = () => client.GetStylesheetAsync(fontId);
+
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>()
+            .WithParameterName("fontId")
+            .WithMessage("*greater than zero*");
+        handler.LastRequest.Should().BeNull("the guard must reject the id before any HTTP call");
     }
 
     [Theory]

@@ -46,7 +46,7 @@ internal sealed class CachingBibleClient(
         return await cache.GetOrCreateAsync(
             key,
             ct => new ValueTask<BibleIndex>(inner.GetIndexAsync(versionId, ct)),
-            new HybridCacheEntryOptions { Expiration = opts.VersionsTtl },
+            new HybridCacheEntryOptions { Expiration = opts.BooksTtl },
             cancellationToken: cancellationToken);
     }
 

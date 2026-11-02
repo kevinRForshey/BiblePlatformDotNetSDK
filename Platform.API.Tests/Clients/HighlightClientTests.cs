@@ -54,7 +54,39 @@ public sealed class HighlightClientTests
     {
         var client = BuildClient(HttpStatusCode.OK, HighlightsCollectionJson);
         var act = () => client.GetHighlightsAsync(0, TestReferences.John316);
-        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>()
+            .WithParameterName("bibleId")
+            .WithMessage("*greater than zero*");
+    }
+
+    [Fact]
+    public async Task GetHighlightsAsync_ThrowsArgumentNullException_WhenPassageIsNull()
+    {
+        var client = BuildClient(HttpStatusCode.OK, HighlightsCollectionJson);
+        var act = () => client.GetHighlightsAsync(3034, null!);
+        await act.Should().ThrowAsync<ArgumentNullException>()
+            .WithParameterName("passage");
+    }
+
+    [Fact]
+    public async Task GetHighlightsAsync_ReturnsEmptyList_WhenBodyIsNull()
+    {
+        var client = BuildClient(HttpStatusCode.OK, "null");
+
+        var result = await client.GetHighlightsAsync(3034, TestReferences.John316);
+
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GetHighlightsAsync_ThrowsBibleApiException_WhenPassageCannotBeNormalized()
+    {
+        var client = BuildClient(HttpStatusCode.OK, HighlightsCollectionJson);
+        var act = () => client.GetHighlightsAsync(3034, TestReferences.BookOnly);
+        var exception = await act.Should().ThrowAsync<BibleApiException>();
+        exception.Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        exception.Which.Message.Should().Be("Failed to normalize USFM reference to string: " +
+            "Reference is in an invalid state (missing chapter, intro, or verses).");
     }
 
     [Theory]
@@ -93,6 +125,16 @@ public sealed class HighlightClientTests
 
         handler.LastRequest!.Method.Should().Be(HttpMethod.Get);
         handler.LastRequest.RequestUri!.AbsolutePath.Should().Be("/v1/highlights/recent-colors");
+    }
+
+    [Fact]
+    public async Task GetRecentColorsAsync_ReturnsEmptyList_WhenBodyIsNull()
+    {
+        var client = BuildClient(HttpStatusCode.OK, "null");
+
+        var result = await client.GetRecentColorsAsync();
+
+        result.Should().BeEmpty();
     }
 
     // -------------------------------------------------------------------------
@@ -142,7 +184,27 @@ public sealed class HighlightClientTests
     {
         var client = BuildClient(HttpStatusCode.OK, HighlightJson);
         var act = () => client.CreateOrUpdateHighlightAsync(0, TestReferences.John316, "44aa44");
-        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>()
+            .WithParameterName("bibleId")
+            .WithMessage("*greater than zero*");
+    }
+
+    [Fact]
+    public async Task CreateOrUpdateHighlightAsync_ThrowsArgumentNullException_WhenPassageIsNull()
+    {
+        var client = BuildClient(HttpStatusCode.OK, HighlightJson);
+        var act = () => client.CreateOrUpdateHighlightAsync(3034, null!, "44aa44");
+        await act.Should().ThrowAsync<ArgumentNullException>()
+            .WithParameterName("passage");
+    }
+
+    [Fact]
+    public async Task CreateOrUpdateHighlightAsync_ThrowsArgumentNullException_WhenColorIsNull()
+    {
+        var client = BuildClient(HttpStatusCode.OK, HighlightJson);
+        var act = () => client.CreateOrUpdateHighlightAsync(3034, TestReferences.John316, null!);
+        await act.Should().ThrowAsync<ArgumentNullException>()
+            .WithParameterName("color");
     }
 
     [Theory]
@@ -154,7 +216,27 @@ public sealed class HighlightClientTests
     {
         var client = BuildClient(HttpStatusCode.OK, HighlightJson);
         var act = () => client.CreateOrUpdateHighlightAsync(3034, TestReferences.John316, color);
-        await act.Should().ThrowAsync<ArgumentException>();
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithParameterName("color")
+            .WithMessage("*6-digit hex*");
+    }
+
+    [Fact]
+    public async Task CreateOrUpdateHighlightAsync_ThrowsBibleEmptyResponseException_WhenBodyIsNull()
+    {
+        var client = BuildClient(HttpStatusCode.OK, "null");
+        var act = () => client.CreateOrUpdateHighlightAsync(3034, TestReferences.John316, "44aa44");
+        await act.Should().ThrowAsync<BibleEmptyResponseException>()
+            .WithMessage("*JHN.3.16*");
+    }
+
+    [Fact]
+    public async Task CreateOrUpdateHighlightAsync_ThrowsBibleApiException_WhenPassageCannotBeNormalized()
+    {
+        var client = BuildClient(HttpStatusCode.OK, HighlightJson);
+        var act = () => client.CreateOrUpdateHighlightAsync(3034, TestReferences.BookOnly, "44aa44");
+        await act.Should().ThrowAsync<BibleApiException>()
+            .Where(e => e.StatusCode == HttpStatusCode.BadRequest);
     }
 
     // -------------------------------------------------------------------------
@@ -196,7 +278,27 @@ public sealed class HighlightClientTests
     {
         var client = BuildClient(HttpStatusCode.NoContent, string.Empty);
         var act = () => client.ClearHighlightsAsync(0, TestReferences.John316);
-        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>()
+            .WithParameterName("bibleId")
+            .WithMessage("*greater than zero*");
+    }
+
+    [Fact]
+    public async Task ClearHighlightsAsync_ThrowsArgumentNullException_WhenPassageIsNull()
+    {
+        var client = BuildClient(HttpStatusCode.NoContent, string.Empty);
+        var act = () => client.ClearHighlightsAsync(3034, null!);
+        await act.Should().ThrowAsync<ArgumentNullException>()
+            .WithParameterName("passage");
+    }
+
+    [Fact]
+    public async Task ClearHighlightsAsync_ThrowsBibleApiException_WhenPassageCannotBeNormalized()
+    {
+        var client = BuildClient(HttpStatusCode.NoContent, string.Empty);
+        var act = () => client.ClearHighlightsAsync(3034, TestReferences.BookOnly);
+        await act.Should().ThrowAsync<BibleApiException>()
+            .Where(e => e.StatusCode == HttpStatusCode.BadRequest);
     }
 
     // -------------------------------------------------------------------------

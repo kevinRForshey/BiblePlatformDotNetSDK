@@ -25,7 +25,8 @@ public sealed class BibleCacheOptions
     public TimeSpan VersionsTtl { get; set; } = TimeSpan.FromHours(24);
 
     /// <summary>
-    /// Cache lifetime for book lists. Default: 24 hours.
+    /// Cache lifetime for a version's full book/chapter/verse index (the single cached fetch behind
+    /// book, chapter, and verse lookups). Default: 24 hours.
     /// </summary>
     public TimeSpan BooksTtl { get; set; } = TimeSpan.FromHours(24);
 
