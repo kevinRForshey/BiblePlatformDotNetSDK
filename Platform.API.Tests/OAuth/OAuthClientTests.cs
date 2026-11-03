@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using FluentAssertions;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Platform.API.Configuration;
@@ -71,6 +72,40 @@ public sealed class OAuthClientTests
         authRequest.AuthorizationUrl.AbsoluteUri.Should().Contain("code_challenge_method%3DS256"   // encoded
             .Replace("%3D", "="));
         authRequest.AuthorizationUrl.AbsoluteUri.Should().Contain("redirect_uri=");
+    }
+
+    [Fact]
+    public void BuildAuthorizationUrl_IncludesEscapedRedirectUriValue_InQueryString()
+    {
+        var client = BuildClient(HttpStatusCode.OK, TokenJson);
+
+        var authRequest = client.BuildAuthorizationUrl();
+
+        authRequest.AuthorizationUrl.AbsoluteUri.Should().Contain(
+            "redirect_uri=" + Uri.EscapeDataString("https://localhost/callback"));
+    }
+
+    [Fact]
+    public void BuildAuthorizationUrl_IncludesNonEmptyNonceValue_InQueryString()
+    {
+        var client = BuildClient(HttpStatusCode.OK, TokenJson);
+
+        var authRequest = client.BuildAuthorizationUrl();
+
+        var match = Regex.Match(authRequest.AuthorizationUrl.AbsoluteUri, "nonce=([^&]*)");
+        match.Success.Should().BeTrue();
+        match.Groups[1].Value.Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public void BuildAuthorizationUrl_IncludesEscapedCodeChallengeValue_InQueryString()
+    {
+        var client = BuildClient(HttpStatusCode.OK, TokenJson);
+
+        var authRequest = client.BuildAuthorizationUrl();
+
+        authRequest.AuthorizationUrl.AbsoluteUri.Should().Contain(
+            "code_challenge=" + Uri.EscapeDataString(authRequest.Pkce.CodeChallenge));
     }
 
     [Fact]
@@ -922,6 +957,180 @@ public sealed class OAuthClientTests
     }
 
     // -------------------------------------------------------------------------
+    // Logging
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void BuildAuthorizationUrl_LogsDebugMessage()
+    {
+        var (client, logger) = BuildClientWithLogger(HttpStatusCode.OK, TokenJson);
+
+        client.BuildAuthorizationUrl();
+
+        logger.Entries.Should().Contain(e => e.Message == "Building authorization URL.");
+    }
+
+    [Fact]
+    public async Task ExchangeCodeAsync_LogsDebugAndInformationMessages()
+    {
+        var (client, logger) = BuildClientWithLogger(HttpStatusCode.OK, TokenJson);
+
+        await client.ExchangeCodeAsync("auth-code", "verifier");
+
+        logger.Entries.Should().Contain(e => e.Message == "Exchanging authorization code for tokens.");
+        logger.Entries.Should().Contain(e =>
+            e.Message == "Authorization code exchange succeeded. Token expires in 3600s.");
+    }
+
+    [Fact]
+    public async Task ExchangeCodeAsync_LogsError_WhenApiReturnsError()
+    {
+        var (client, logger) = BuildClientWithLogger(HttpStatusCode.BadRequest, """{"error":"invalid_grant"}""");
+
+        var act = () => client.ExchangeCodeAsync("bad-code", "verifier");
+        await act.Should().ThrowAsync<BibleApiException>();
+
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Error &&
+            e.Message == "OAuth token request failed with HTTP 400 Bad Request.");
+    }
+
+    [Fact]
+    public async Task CompleteAuthorizationCallbackAsync_LogsDebugMessages_OnSuccess()
+    {
+        var stateRedirect = new HttpResponseMessage(HttpStatusCode.Found);
+        stateRedirect.Headers.Location = new Uri("https://auth.youversion.com/auth/callback?code=auth-code-xyz");
+        var tokenResponse = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(TokenJson, Encoding.UTF8, "application/json")
+        };
+        var handler = new SequencedHttpMessageHandler(stateRedirect, tokenResponse);
+        var logger = new CapturingLogger<BibleOAuthClient>();
+        var client = BuildClientFromSequencedHandler(handler, logger: logger);
+
+        await client.CompleteAuthorizationCallbackAsync("state-abc", "verifier");
+
+        logger.Entries.Should().Contain(e => e.Message ==
+            "Replaying state to the auth callback endpoint to obtain an authorization code.");
+        logger.Entries.Should().Contain(e => e.Message ==
+            "Auth callback exchange succeeded; redeeming the authorization code.");
+    }
+
+    [Fact]
+    public async Task CompleteAuthorizationCallbackAsync_LogsError_WhenNoLocationHeaderReturned()
+    {
+        var noLocationResponse = new HttpResponseMessage(HttpStatusCode.BadGateway)
+        {
+            Content = new StringContent("upstream error", Encoding.UTF8, "text/plain")
+        };
+        var handler = new SequencedHttpMessageHandler(noLocationResponse);
+        var logger = new CapturingLogger<BibleOAuthClient>();
+        var client = BuildClientFromSequencedHandler(handler, logger: logger);
+
+        var act = () => client.CompleteAuthorizationCallbackAsync("state-abc", "verifier");
+        await act.Should().ThrowAsync<BibleApiException>();
+
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Error &&
+            e.Message == "Auth callback exchange failed with HTTP 502 Bad Gateway and no Location header. " +
+                "Response body: upstream error");
+    }
+
+    [Fact]
+    public async Task RefreshTokenAsync_LogsDebugAndInformationMessages()
+    {
+        const string newTokenJson = """
+            { "access_token": "new-acc", "refresh_token": "new-ref",
+              "token_type": "Bearer", "expires_in": 3600 }
+            """;
+        var existing = new OAuthTokenResponse
+        {
+            AccessToken = "old-acc", RefreshToken = "ref-tok",
+            ExpiresIn = 3600, ReceivedAt = DateTimeOffset.UtcNow
+        };
+        var (client, logger) = BuildClientWithLogger(HttpStatusCode.OK, newTokenJson, new FakeTokenProvider(existing));
+
+        await client.RefreshTokenAsync();
+
+        logger.Entries.Should().Contain(e => e.Message == "Refreshing access token.");
+        logger.Entries.Should().Contain(e => e.Message == "Token refresh succeeded. New token expires in 3600s.");
+    }
+
+    [Fact]
+    public async Task SignOutAsync_LogsInformationMessage()
+    {
+        var (client, logger) = BuildClientWithLogger(HttpStatusCode.OK, TokenJson);
+
+        await client.SignOutAsync();
+
+        logger.Entries.Should().Contain(e => e.Message == "User signed out; token cleared from provider.");
+    }
+
+    [Fact]
+    public async Task RequestPermissionsAsync_LogsDebugMessage_WithJoinedPermissions()
+    {
+        const string responseJson = """{ "token": "dx-tok", "token_type": "data_exchange", "expires_in": 300 }""";
+        var (client, logger) = BuildClientWithLogger(
+            HttpStatusCode.Created, responseJson, new FakeTokenProvider(MakeStoredToken()));
+
+        await client.RequestPermissionsAsync(["highlights", "bookmarks"]);
+
+        logger.Entries.Should().Contain(e => e.Message ==
+            "Requesting data exchange token for permissions: highlights, bookmarks.");
+    }
+
+    [Fact]
+    public async Task RequestPermissionsAsync_LogsError_OnFailure()
+    {
+        var (client, logger) = BuildClientWithLogger(
+            HttpStatusCode.Unauthorized, """{"error":"invalid_token"}""", new FakeTokenProvider(MakeStoredToken()));
+
+        var act = () => client.RequestPermissionsAsync(["highlights"]);
+        await act.Should().ThrowAsync<BibleApiException>();
+
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Error &&
+            e.Message.StartsWith("Data exchange token request failed with HTTP 401 Unauthorized."));
+    }
+
+    [Fact]
+    public void BuildDirectDataExchangeUrl_LogsDebugMessage()
+    {
+        var (client, logger) = BuildClientWithLogger(HttpStatusCode.OK, TokenJson);
+
+        client.BuildDirectDataExchangeUrl(["highlights"]);
+
+        logger.Entries.Should().Contain(e => e.Message == "Building direct data exchange URL.");
+    }
+
+    [Fact]
+    public async Task CompleteDataExchangeApprovalAsync_LogsDebugAndInformationMessages()
+    {
+        var handler = new FakeHttpMessageHandler(HttpStatusCode.SeeOther, "", response =>
+            response.Headers.Location = new Uri("https://myapp.com/?data_exchange_status=granted"));
+        var logger = new CapturingLogger<BibleOAuthClient>();
+        var client = BuildClientFromHandler(handler, logger: logger);
+
+        await client.CompleteDataExchangeApprovalAsync("dx-tok");
+
+        logger.Entries.Should().Contain(e => e.Message == "Completing data exchange approval for token.");
+        logger.Entries.Should().Contain(e => e.Message == "Data exchange approval completed with status Granted.");
+    }
+
+    [Fact]
+    public async Task CompleteDataExchangeApprovalAsync_LogsError_OnFailure()
+    {
+        var (client, logger) = BuildClientWithLogger(HttpStatusCode.Unauthorized, """{"error":"invalid_token"}""");
+
+        var act = () => client.CompleteDataExchangeApprovalAsync("dx-tok");
+        await act.Should().ThrowAsync<BibleApiException>();
+
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Error &&
+            e.Message.StartsWith("Data exchange completion failed with HTTP 401 Unauthorized."));
+    }
+
+    // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
 
@@ -938,7 +1147,8 @@ public sealed class OAuthClientTests
         string json,
         FakeTokenProvider? tokenProvider = null,
         string? appKey = "test-app-key",
-        Action<BibleOAuthOptions>? configureOptions = null)
+        Action<BibleOAuthOptions>? configureOptions = null,
+        ILogger<BibleOAuthClient>? logger = null)
     {
         var handler = new FakeHttpMessageHandler(status, json);
         var httpClient = new HttpClient(handler)
@@ -954,14 +1164,28 @@ public sealed class OAuthClientTests
             options,
             apiOptions,
             tokenProvider ?? new FakeTokenProvider(),
-            NullLogger<BibleOAuthClient>.Instance);
+            logger ?? NullLogger<BibleOAuthClient>.Instance);
+    }
+
+    /// <summary>Like <see cref="BuildClient"/>, but also returns the logger so tests can assert on captured log messages.</summary>
+    private static (BibleOAuthClient Client, CapturingLogger<BibleOAuthClient> Logger) BuildClientWithLogger(
+        HttpStatusCode status,
+        string json,
+        FakeTokenProvider? tokenProvider = null,
+        string? appKey = "test-app-key",
+        Action<BibleOAuthOptions>? configureOptions = null)
+    {
+        var logger = new CapturingLogger<BibleOAuthClient>();
+        var client = BuildClient(status, json, tokenProvider, appKey, configureOptions, logger);
+        return (client, logger);
     }
 
     private static BibleOAuthClient BuildClientFromHandler(
         FakeHttpMessageHandler handler,
         FakeTokenProvider? tokenProvider = null,
         string? appKey = "test-app-key",
-        Action<BibleOAuthOptions>? configureOptions = null)
+        Action<BibleOAuthOptions>? configureOptions = null,
+        ILogger<BibleOAuthClient>? logger = null)
     {
         var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://auth.youversion.com") };
         var oauthOptions = DefaultOAuthOptions();
@@ -973,13 +1197,14 @@ public sealed class OAuthClientTests
             options,
             apiOptions,
             tokenProvider ?? new FakeTokenProvider(),
-            NullLogger<BibleOAuthClient>.Instance);
+            logger ?? NullLogger<BibleOAuthClient>.Instance);
     }
 
     private static BibleOAuthClient BuildClientFromSequencedHandler(
         SequencedHttpMessageHandler handler,
         FakeTokenProvider? tokenProvider = null,
-        string? appKey = "test-app-key")
+        string? appKey = "test-app-key",
+        ILogger<BibleOAuthClient>? logger = null)
     {
         var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://auth.youversion.com") };
         var options = Options.Create(new BibleOAuthOptions
@@ -996,7 +1221,7 @@ public sealed class OAuthClientTests
             options,
             apiOptions,
             tokenProvider ?? new FakeTokenProvider(),
-            NullLogger<BibleOAuthClient>.Instance);
+            logger ?? NullLogger<BibleOAuthClient>.Instance);
     }
 
     private static OAuthTokenResponse MakeStoredToken() => new()

@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using FluentAssertions;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Platform.API.Clients;
 using Platform.API.Exceptions;
@@ -101,6 +102,21 @@ public sealed class HighlightClientTests
             .Where(e => e.StatusCode == status);
     }
 
+    [Fact]
+    public async Task GetHighlightsAsync_LogsDebugMessages()
+    {
+        var (client, logger) = BuildClientWithLogger(HttpStatusCode.OK, HighlightsCollectionJson);
+
+        await client.GetHighlightsAsync(3034, TestReferences.John316);
+
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug
+            && e.Message == "Fetching highlights for JHN.3.16 in Bible 3034.");
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug
+            && e.Message == "Fetched 1 highlight(s) for JHN.3.16.");
+    }
+
     // -------------------------------------------------------------------------
     // GetRecentColorsAsync
     // -------------------------------------------------------------------------
@@ -135,6 +151,19 @@ public sealed class HighlightClientTests
         var result = await client.GetRecentColorsAsync();
 
         result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GetRecentColorsAsync_LogsDebugMessages()
+    {
+        var (client, logger) = BuildClientWithLogger(HttpStatusCode.OK, RecentColorsJson);
+
+        await client.GetRecentColorsAsync();
+
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug && e.Message == "Fetching recently used highlight colors.");
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug && e.Message == "Fetched 2 recent highlight color(s).");
     }
 
     // -------------------------------------------------------------------------
@@ -239,6 +268,20 @@ public sealed class HighlightClientTests
             .Where(e => e.StatusCode == HttpStatusCode.BadRequest);
     }
 
+    [Fact]
+    public async Task CreateOrUpdateHighlightAsync_LogsDebugMessages()
+    {
+        var (client, logger) = BuildClientWithLogger(HttpStatusCode.OK, HighlightJson);
+
+        await client.CreateOrUpdateHighlightAsync(3034, TestReferences.John316, "44aa44");
+
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug
+            && e.Message == "Creating or updating highlight for JHN.3.16 in Bible 3034 with color 44aa44.");
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug && e.Message == "Saved highlight for JHN.3.16.");
+    }
+
     // -------------------------------------------------------------------------
     // ClearHighlightsAsync
     // -------------------------------------------------------------------------
@@ -301,6 +344,20 @@ public sealed class HighlightClientTests
             .Where(e => e.StatusCode == HttpStatusCode.BadRequest);
     }
 
+    [Fact]
+    public async Task ClearHighlightsAsync_LogsDebugMessages()
+    {
+        var (client, logger) = BuildClientWithLogger(HttpStatusCode.NoContent, string.Empty);
+
+        await client.ClearHighlightsAsync(3034, TestReferences.John316);
+
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug
+            && e.Message == "Clearing highlights for JHN.3.16 in Bible 3034.");
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug && e.Message == "Cleared highlights for JHN.3.16.");
+    }
+
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
@@ -308,9 +365,16 @@ public sealed class HighlightClientTests
     private static HighlightClient BuildClient(HttpStatusCode status, string json)
         => BuildClientFromHandler(new FakeHttpMessageHandler(status, json));
 
-    private static HighlightClient BuildClientFromHandler(FakeHttpMessageHandler handler)
+    private static HighlightClient BuildClientFromHandler(FakeHttpMessageHandler handler, ILogger<HighlightClient>? logger = null)
     {
         var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://api.youversion.com") };
-        return new HighlightClient(httpClient, NullLogger<HighlightClient>.Instance);
+        return new HighlightClient(httpClient, logger ?? NullLogger<HighlightClient>.Instance);
+    }
+
+    private static (HighlightClient Client, CapturingLogger<HighlightClient> Logger) BuildClientWithLogger(HttpStatusCode status, string json)
+    {
+        var logger = new CapturingLogger<HighlightClient>();
+        var client = BuildClientFromHandler(new FakeHttpMessageHandler(status, json), logger);
+        return (client, logger);
     }
 }

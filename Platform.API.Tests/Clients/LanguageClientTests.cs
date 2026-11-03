@@ -3,6 +3,7 @@ using System.Net.Http;
 
 using FluentAssertions;
 
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 using Platform.API.Clients;
@@ -51,6 +52,81 @@ public sealed class LanguageClientTests
         query.Should().Contain("page_size=10");
         query.Should().Contain("country=US");
         query.Should().Contain("bibles_available=true");
+    }
+
+    [Fact]
+    public async Task GetLanguagesAsync_RequestsExpectedPath_WhenNoFiltersProvided()
+    {
+        var handler = new FakeHttpMessageHandler(HttpStatusCode.OK, """{"data": []}""");
+        var client = BuildClientFromHandler(handler);
+
+        await client.GetLanguagesAsync();
+
+        handler.LastRequest!.RequestUri!.PathAndQuery.Should().Be("/v1/languages");
+    }
+
+    [Fact]
+    public async Task GetLanguagesAsync_BuildsExactQueryString_WithBiblesAvailableFalse()
+    {
+        var handler = new FakeHttpMessageHandler(HttpStatusCode.OK, """{"data": []}""");
+        var client = BuildClientFromHandler(handler);
+
+        await client.GetLanguagesAsync(pageToken: "tok", pageSize: 10, country: "US", biblesAvailable: false);
+
+        handler.LastRequest!.RequestUri!.PathAndQuery.Should().Be(
+            "/v1/languages?page_token=tok&page_size=10&country=US&bibles_available=false");
+    }
+
+    [Theory]
+    [InlineData(" ")]
+    [InlineData("\t")]
+    public async Task GetLanguagesAsync_ThrowsArgumentException_WhenPageTokenIsWhitespace(string pageToken)
+    {
+        var client = BuildClient(HttpStatusCode.OK, """{"data": []}""");
+        var act = () => client.GetLanguagesAsync(pageToken: pageToken);
+        await act.Should().ThrowAsync<ArgumentException>().WithMessage("*Page token cannot be empty or whitespace*");
+    }
+
+    [Fact]
+    public async Task GetLanguagesAsync_ThrowsArgumentOutOfRangeException_WhenPageSizeIsInvalid()
+    {
+        var client = BuildClient(HttpStatusCode.OK, """{"data": []}""");
+        var act = () => client.GetLanguagesAsync(pageSize: 0);
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>().WithMessage("*Page size must be greater than zero*");
+    }
+
+    [Fact]
+    public async Task GetLanguagesAsync_DoesNotThrow_WhenPageSizeIsPositive()
+    {
+        var client = BuildClient(HttpStatusCode.OK, """{"data": []}""");
+        var act = () => client.GetLanguagesAsync(pageSize: 5);
+        await act.Should().NotThrowAsync();
+    }
+
+    [Theory]
+    [InlineData(" ")]
+    [InlineData("\t")]
+    public async Task GetLanguagesAsync_ThrowsArgumentException_WhenCountryIsWhitespace(string country)
+    {
+        var client = BuildClient(HttpStatusCode.OK, """{"data": []}""");
+        var act = () => client.GetLanguagesAsync(country: country);
+        await act.Should().ThrowAsync<ArgumentException>().WithMessage("*Country cannot be empty or whitespace*");
+    }
+
+    [Fact]
+    public async Task GetLanguagesAsync_LogsDebugMessages()
+    {
+        var (client, logger) = BuildClientWithLogger(HttpStatusCode.OK, """
+            {"data": [{"id": "en", "language": "en", "display_names": {"en": "English"}}]}
+            """);
+
+        await client.GetLanguagesAsync(pageToken: "tok", country: "US");
+
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug
+            && e.Message == "Fetching languages (pageToken=tok, country=US).");
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug && e.Message == "Fetched 1 language(s) from API.");
     }
 
     [Fact]
@@ -115,7 +191,7 @@ public sealed class LanguageClientTests
     {
         var client = BuildClient(HttpStatusCode.OK, """{"id": "en", "language": "en"}""");
         var act = () => client.GetLanguageAsync(languageId);
-        await act.Should().ThrowAsync<ArgumentException>();
+        await act.Should().ThrowAsync<ArgumentException>().WithMessage("*Language id is required*");
     }
 
     [Fact]
@@ -123,15 +199,35 @@ public sealed class LanguageClientTests
     {
         var client = BuildClient(HttpStatusCode.OK, "null");
         var act = () => client.GetLanguageAsync("en");
-        await act.Should().ThrowAsync<BibleEmptyResponseException>();
+        await act.Should().ThrowAsync<BibleEmptyResponseException>().WithMessage("*en*");
+    }
+
+    [Fact]
+    public async Task GetLanguageAsync_LogsDebugMessages()
+    {
+        var (client, logger) = BuildClientWithLogger(HttpStatusCode.OK, """{"id": "en", "language": "en"}""");
+
+        await client.GetLanguageAsync("en");
+
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug && e.Message == "Fetching language en.");
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug && e.Message == "Fetched language en.");
     }
 
     private static LanguageClient BuildClient(HttpStatusCode status, string json)
         => BuildClientFromHandler(new FakeHttpMessageHandler(status, json));
 
-    private static LanguageClient BuildClientFromHandler(FakeHttpMessageHandler handler)
+    private static LanguageClient BuildClientFromHandler(FakeHttpMessageHandler handler, ILogger<LanguageClient>? logger = null)
     {
         var httpClient = new HttpClient(handler) { BaseAddress = new System.Uri("https://api.youversion.com") };
-        return new LanguageClient(httpClient, NullLogger<LanguageClient>.Instance);
+        return new LanguageClient(httpClient, logger ?? NullLogger<LanguageClient>.Instance);
+    }
+
+    private static (LanguageClient Client, CapturingLogger<LanguageClient> Logger) BuildClientWithLogger(HttpStatusCode status, string json)
+    {
+        var logger = new CapturingLogger<LanguageClient>();
+        var client = BuildClientFromHandler(new FakeHttpMessageHandler(status, json), logger);
+        return (client, logger);
     }
 }

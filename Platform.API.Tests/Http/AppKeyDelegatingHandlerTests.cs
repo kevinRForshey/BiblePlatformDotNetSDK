@@ -64,6 +64,22 @@ public sealed class AppKeyDelegatingHandlerTests
         values.Should().ContainSingle().Which.Should().Be(appKey);
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(" ")]
+    public async Task SendAsync_ThrowsInvalidOperationException_WhenAppKeyIsNotConfigured(string? appKey)
+    {
+        var (_, httpClient) = BuildPipeline(appKey!);
+
+        var act = () => httpClient.GetAsync("/test");
+
+        var exception = await act.Should().ThrowAsync<InvalidOperationException>();
+        exception.Which.Message.Should().Contain("BibleApiOptions.AppKey is not configured");
+        exception.Which.Message.Should().Contain("AddBibleApiClients(options => options.AppKey = \"your-key\")");
+        exception.Which.Message.Should().Contain("BibleApi:AppKey configuration value");
+    }
+
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------

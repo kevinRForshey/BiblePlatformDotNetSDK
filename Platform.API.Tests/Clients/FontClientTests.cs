@@ -1,4 +1,5 @@
 using System.Net;
+using Microsoft.Extensions.Logging;
 using System.Net.Http;
 
 using FluentAssertions;
@@ -68,6 +69,19 @@ public sealed class FontClientTests
     }
 
     [Fact]
+    public async Task GetFontsAsync_LogsDebugMessages()
+    {
+        var (client, logger) = BuildClientWithLogger(HttpStatusCode.OK, $$"""{"data": [{{FontJson}}]}""");
+
+        await client.GetFontsAsync();
+
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug && e.Message == "Fetching font families.");
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug && e.Message == "Fetched 1 font famil(y/ies) from API.");
+    }
+
+    [Fact]
     public async Task GetFontAsync_ReturnsFont_WhenApiSucceeds()
     {
         var client = BuildClient(HttpStatusCode.OK, FontJson);
@@ -121,6 +135,19 @@ public sealed class FontClientTests
     }
 
     [Fact]
+    public async Task GetFontAsync_LogsDebugMessages()
+    {
+        var (client, logger) = BuildClientWithLogger(HttpStatusCode.OK, FontJson);
+
+        await client.GetFontAsync(1);
+
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug && e.Message == "Fetching font 1.");
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug && e.Message == "Fetched font 1 (Untitled Serif).");
+    }
+
+    [Fact]
     public async Task GetStylesheetAsync_ReturnsRawCss_WhenApiSucceeds()
     {
         const string css = "@font-face { font-family: 'Untitled Serif'; }";
@@ -162,12 +189,38 @@ public sealed class FontClientTests
         await act.Should().ThrowAsync<BibleApiException>().Where(e => e.StatusCode == status);
     }
 
+    [Fact]
+    public async Task GetStylesheetAsync_LogsDebugMessages()
+    {
+        const string css = "@font-face {}";
+        var handler = new FakeHttpMessageHandler(
+            HttpStatusCode.OK,
+            css,
+            response => response.Content = new StringContent(css, System.Text.Encoding.UTF8, "text/css"));
+        var logger = new CapturingLogger<FontClient>();
+        var client = BuildClientFromHandler(handler, logger);
+
+        await client.GetStylesheetAsync(1);
+
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug && e.Message == "Fetching stylesheet for font 1.");
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug && e.Message == $"Fetched stylesheet for font 1 ({css.Length} chars).");
+    }
+
     private static FontClient BuildClient(HttpStatusCode status, string json)
         => BuildClientFromHandler(new FakeHttpMessageHandler(status, json));
 
-    private static FontClient BuildClientFromHandler(FakeHttpMessageHandler handler)
+    private static FontClient BuildClientFromHandler(FakeHttpMessageHandler handler, ILogger<FontClient>? logger = null)
     {
         var httpClient = new HttpClient(handler) { BaseAddress = new System.Uri("https://api.youversion.com") };
-        return new FontClient(httpClient, NullLogger<FontClient>.Instance);
+        return new FontClient(httpClient, logger ?? NullLogger<FontClient>.Instance);
+    }
+
+    private static (FontClient Client, CapturingLogger<FontClient> Logger) BuildClientWithLogger(HttpStatusCode status, string json)
+    {
+        var logger = new CapturingLogger<FontClient>();
+        var client = BuildClientFromHandler(new FakeHttpMessageHandler(status, json), logger);
+        return (client, logger);
     }
 }

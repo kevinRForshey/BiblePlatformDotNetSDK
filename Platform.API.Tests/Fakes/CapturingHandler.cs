@@ -27,6 +27,9 @@ internal sealed class CapturingHandler : HttpMessageHandler
     /// <summary>The number of requests received by this handler.</summary>
     public int CallCount { get; private set; }
 
+    /// <summary>Whether <see cref="Dispose(bool)"/> has been called with <c>disposing: true</c>.</summary>
+    public bool Disposed { get; private set; }
+
     protected override Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
     {
@@ -38,5 +41,13 @@ internal sealed class CapturingHandler : HttpMessageHandler
             response.Content = new StringContent(_responseBody, Encoding.UTF8, "application/json");
 
         return Task.FromResult(response);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+            Disposed = true;
+
+        base.Dispose(disposing);
     }
 }

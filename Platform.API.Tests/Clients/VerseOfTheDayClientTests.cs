@@ -3,6 +3,7 @@ using System.Net.Http;
 
 using FluentAssertions;
 
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 using Platform.API.Clients;
@@ -58,6 +59,44 @@ public sealed class VerseOfTheDayClientTests
         await client.GetVerseOfTheDaysAsync();
 
         handler.LastRequest!.RequestUri!.Query.Should().BeEmpty();
+        handler.LastRequest.RequestUri!.AbsolutePath.Should().Be("/v1/verse-of-the-days");
+    }
+
+    [Fact]
+    public async Task GetVerseOfTheDaysAsync_BuildsExactQueryString_WithMultipleLanguageRanges()
+    {
+        var handler = new FakeHttpMessageHandler(HttpStatusCode.OK, """{"data": []}""");
+        var client = BuildClientFromHandler(handler);
+
+        await client.GetVerseOfTheDaysAsync(languageRanges: ["en", "es"]);
+
+        handler.LastRequest!.RequestUri!.PathAndQuery.Should().Be(
+            "/v1/verse-of-the-days?language_ranges[]=en&language_ranges[]=es");
+    }
+
+    [Fact]
+    public async Task GetVerseOfTheDaysAsync_ReturnsEmptyList_WhenBodyIsNull()
+    {
+        var client = BuildClient(HttpStatusCode.OK, "null");
+
+        var result = await client.GetVerseOfTheDaysAsync();
+
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GetVerseOfTheDaysAsync_LogsDebugMessages()
+    {
+        var (client, logger) = BuildClientWithLogger(HttpStatusCode.OK, """
+            {"data": [{"day": 1, "passage_id": "JHN.3.16"}]}
+            """);
+
+        await client.GetVerseOfTheDaysAsync();
+
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug && e.Message == "Fetching verse-of-the-day calendar.");
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug && e.Message == "Fetched 1 verse-of-the-day entr(y/ies) from API.");
     }
 
     [Theory]
@@ -101,7 +140,16 @@ public sealed class VerseOfTheDayClientTests
     {
         var client = BuildClient(HttpStatusCode.OK, """{"day": 1, "passage_id": "JHN.3.16"}""");
         var act = () => client.GetVerseOfTheDayAsync(day);
-        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>()
+            .WithMessage("*Day must be between 1 and 366*");
+    }
+
+    [Fact]
+    public async Task GetVerseOfTheDayAsync_DoesNotThrow_WhenDayIsAtUpperBound()
+    {
+        var client = BuildClient(HttpStatusCode.OK, """{"day": 366, "passage_id": "JHN.3.16"}""");
+        var act = () => client.GetVerseOfTheDayAsync(366);
+        await act.Should().NotThrowAsync();
     }
 
     [Fact]
@@ -109,15 +157,35 @@ public sealed class VerseOfTheDayClientTests
     {
         var client = BuildClient(HttpStatusCode.OK, "null");
         var act = () => client.GetVerseOfTheDayAsync(1);
-        await act.Should().ThrowAsync<BibleEmptyResponseException>();
+        await act.Should().ThrowAsync<BibleEmptyResponseException>().WithMessage("*day 1*");
+    }
+
+    [Fact]
+    public async Task GetVerseOfTheDayAsync_LogsDebugMessages()
+    {
+        var (client, logger) = BuildClientWithLogger(HttpStatusCode.OK, """{"day": 1, "passage_id": "JHN.3.16"}""");
+
+        await client.GetVerseOfTheDayAsync(1);
+
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug && e.Message == "Fetching verse-of-the-day entry for day 1.");
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug && e.Message == "Fetched verse-of-the-day entry for day 1.");
     }
 
     private static VerseOfTheDayClient BuildClient(HttpStatusCode status, string json)
         => BuildClientFromHandler(new FakeHttpMessageHandler(status, json));
 
-    private static VerseOfTheDayClient BuildClientFromHandler(FakeHttpMessageHandler handler)
+    private static VerseOfTheDayClient BuildClientFromHandler(FakeHttpMessageHandler handler, ILogger<VerseOfTheDayClient>? logger = null)
     {
         var httpClient = new HttpClient(handler) { BaseAddress = new System.Uri("https://api.youversion.com") };
-        return new VerseOfTheDayClient(httpClient, NullLogger<VerseOfTheDayClient>.Instance);
+        return new VerseOfTheDayClient(httpClient, logger ?? NullLogger<VerseOfTheDayClient>.Instance);
+    }
+
+    private static (VerseOfTheDayClient Client, CapturingLogger<VerseOfTheDayClient> Logger) BuildClientWithLogger(HttpStatusCode status, string json)
+    {
+        var logger = new CapturingLogger<VerseOfTheDayClient>();
+        var client = BuildClientFromHandler(new FakeHttpMessageHandler(status, json), logger);
+        return (client, logger);
     }
 }

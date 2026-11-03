@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 
 using FluentAssertions;
 
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 using Platform.API.Clients;
@@ -72,7 +73,8 @@ public sealed class AppClientTests
     {
         var client = BuildClient(HttpStatusCode.OK, """{"app_id": "a", "name": "n", "status": "live"}""");
         var act = () => client.GetAppAsync(appId);
-        await act.Should().ThrowAsync<ArgumentException>();
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithMessage("*App id is required*");
     }
 
     [Theory]
@@ -89,16 +91,38 @@ public sealed class AppClientTests
     public async Task GetAppAsync_ThrowsBibleEmptyResponseException_WhenBodyIsNull()
     {
         var client = BuildClient(HttpStatusCode.OK, "null");
-        var act = () => client.GetAppAsync("a");
-        await act.Should().ThrowAsync<BibleEmptyResponseException>();
+        var act = () => client.GetAppAsync("a1b2");
+        await act.Should().ThrowAsync<BibleEmptyResponseException>()
+            .WithMessage("*App a1b2 was not found or returned an empty response*");
+    }
+
+    [Fact]
+    public async Task GetAppAsync_LogsDebugMessages()
+    {
+        var (client, logger) = BuildClientWithLogger(HttpStatusCode.OK,
+            """{"app_id": "a1b2", "name": "My App", "status": "live"}""");
+
+        await client.GetAppAsync("a1b2");
+
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug && e.Message == "Fetching app a1b2.");
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug && e.Message == "Fetched app a1b2 (My App).");
     }
 
     private static AppClient BuildClient(HttpStatusCode status, string json)
         => BuildClientFromHandler(new FakeHttpMessageHandler(status, json));
 
-    private static AppClient BuildClientFromHandler(FakeHttpMessageHandler handler)
+    private static AppClient BuildClientFromHandler(FakeHttpMessageHandler handler, ILogger<AppClient>? logger = null)
     {
         var httpClient = new HttpClient(handler) { BaseAddress = new System.Uri("https://api.youversion.com") };
-        return new AppClient(httpClient, NullLogger<AppClient>.Instance);
+        return new AppClient(httpClient, logger ?? NullLogger<AppClient>.Instance);
+    }
+
+    private static (AppClient Client, CapturingLogger<AppClient> Logger) BuildClientWithLogger(HttpStatusCode status, string json)
+    {
+        var logger = new CapturingLogger<AppClient>();
+        var client = BuildClientFromHandler(new FakeHttpMessageHandler(status, json), logger);
+        return (client, logger);
     }
 }
