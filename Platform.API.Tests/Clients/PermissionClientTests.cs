@@ -3,6 +3,7 @@ using System.Net.Http;
 
 using FluentAssertions;
 
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 using Platform.API.Clients;
@@ -54,7 +55,8 @@ public sealed class PermissionClientTests
     {
         var client = BuildClient(HttpStatusCode.OK, """{"permissions": []}""");
         var act = () => client.GetPermissionsAsync(appId);
-        await act.Should().ThrowAsync<ArgumentException>();
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithMessage("*App id is required*");
     }
 
     [Theory]
@@ -72,15 +74,36 @@ public sealed class PermissionClientTests
     {
         var client = BuildClient(HttpStatusCode.OK, "null");
         var act = () => client.GetPermissionsAsync("app-1");
-        await act.Should().ThrowAsync<BibleEmptyResponseException>();
+        await act.Should().ThrowAsync<BibleEmptyResponseException>()
+            .WithMessage("*app-1*");
+    }
+
+    [Fact]
+    public async Task GetPermissionsAsync_LogsDebugMessages()
+    {
+        var (client, logger) = BuildClientWithLogger(HttpStatusCode.OK, """{"permissions": ["highlights"]}""");
+
+        await client.GetPermissionsAsync("app-1");
+
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug && e.Message == "Fetching permissions granted to app app-1.");
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug && e.Message == "Fetched 1 permission(s) for app app-1.");
     }
 
     private static PermissionClient BuildClient(HttpStatusCode status, string json)
         => BuildClientFromHandler(new FakeHttpMessageHandler(status, json));
 
-    private static PermissionClient BuildClientFromHandler(FakeHttpMessageHandler handler)
+    private static PermissionClient BuildClientFromHandler(FakeHttpMessageHandler handler, ILogger<PermissionClient>? logger = null)
     {
         var httpClient = new HttpClient(handler) { BaseAddress = new System.Uri("https://api.youversion.com") };
-        return new PermissionClient(httpClient, NullLogger<PermissionClient>.Instance);
+        return new PermissionClient(httpClient, logger ?? NullLogger<PermissionClient>.Instance);
+    }
+
+    private static (PermissionClient Client, CapturingLogger<PermissionClient> Logger) BuildClientWithLogger(HttpStatusCode status, string json)
+    {
+        var logger = new CapturingLogger<PermissionClient>();
+        var client = BuildClientFromHandler(new FakeHttpMessageHandler(status, json), logger);
+        return (client, logger);
     }
 }

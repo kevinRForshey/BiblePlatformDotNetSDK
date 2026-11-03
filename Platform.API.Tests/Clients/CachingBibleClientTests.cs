@@ -151,7 +151,8 @@ public sealed class CachingBibleClientTests
 
         var act = () => client.GetChaptersAsync(3034, bookUsfm);
 
-        await act.Should().ThrowAsync<ArgumentException>();
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithMessage("*Book USFM code is required*");
     }
 
     [Theory]
@@ -163,7 +164,8 @@ public sealed class CachingBibleClientTests
 
         var act = () => client.GetVersesAsync(3034, bookUsfm, 1);
 
-        await act.Should().ThrowAsync<ArgumentException>();
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithMessage("*Book USFM code is required*");
     }
 
     [Theory]
@@ -175,7 +177,8 @@ public sealed class CachingBibleClientTests
 
         var act = () => client.GetVersesAsync(3034, "GEN", chapterNumber);
 
-        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>()
+            .WithMessage("*Chapter number must be greater than zero*");
     }
 
     // -------------------------------------------------------------------------

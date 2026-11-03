@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http;
 using System.Threading.Tasks;
 using FluentAssertions;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Platform.API.Clients;
 using Platform.API.Exceptions;
@@ -57,7 +58,17 @@ public sealed class BibleClientTests
     {
         var client = BuildClient(HttpStatusCode.OK, """{"data":[],"next_page_token":null}""");
         var act = () => client.GetVersionsAsync(languageRange);
-        await act.Should().ThrowAsync<ArgumentException>();
+        await act.Should().ThrowAsync<ArgumentException>().WithMessage("*Language range is required*");
+    }
+
+    [Theory]
+    [InlineData(" ")]
+    [InlineData("\t")]
+    public async Task GetVersionsAsync_ThrowsArgumentException_WhenPageTokenIsWhitespace(string pageToken)
+    {
+        var client = BuildClient(HttpStatusCode.OK, """{"data":[],"next_page_token":null}""");
+        var act = () => client.GetVersionsAsync("en", pageToken: pageToken);
+        await act.Should().ThrowAsync<ArgumentException>().WithMessage("*Page token cannot be empty or whitespace*");
     }
 
     [Fact]
@@ -65,7 +76,7 @@ public sealed class BibleClientTests
     {
         var client = BuildClient(HttpStatusCode.OK, """{"data":[],"next_page_token":null}""");
         var act = () => client.GetVersionsAsync("en", pageSize: 0);
-        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>().WithMessage("*Page size must be greater than zero*");
     }
 
     [Fact]
@@ -88,6 +99,33 @@ public sealed class BibleClientTests
         await client.GetVersionsAsync("en", pageSize: 5);
 
         handler.LastRequest!.RequestUri!.Query.Should().Contain("page_size=5");
+    }
+
+    [Fact]
+    public async Task GetVersionsAsync_EscapesLanguageRange_InQueryString()
+    {
+        var handler = new FakeHttpMessageHandler(HttpStatusCode.OK, """{"data":[],"next_page_token":null}""");
+        var client = BuildClientFromHandler(handler);
+
+        await client.GetVersionsAsync("en-US");
+
+        handler.LastRequest!.RequestUri!.Query.Should().Be("?language_ranges[]=en-US");
+    }
+
+    [Fact]
+    public async Task GetVersionsAsync_LogsDebugMessages()
+    {
+        var (client, logger) = BuildClientWithLogger(HttpStatusCode.OK, """
+            {"data": [{"id": 1, "abbreviation": "X", "localized_abbreviation": "X", "title": "X", "localized_title": "X", "language_tag": "en"}], "next_page_token": null}
+            """);
+
+        await client.GetVersionsAsync("en");
+
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug
+            && e.Message == "Fetching Bible versions for language range 'en' (pageToken=(null)).");
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug && e.Message == "Fetched 1 Bible version(s) from API.");
     }
 
     [Theory]
@@ -128,6 +166,38 @@ public sealed class BibleClientTests
     }
 
     [Fact]
+    public async Task GetVersionAsync_RequestsExpectedPath()
+    {
+        var handler = new FakeHttpMessageHandler(HttpStatusCode.OK, """{"id": 3034, "abbreviation": "BSB"}""");
+        var client = BuildClientFromHandler(handler);
+
+        await client.GetVersionAsync(3034);
+
+        handler.LastRequest!.RequestUri!.AbsolutePath.Should().Be("/v1/bibles/3034");
+    }
+
+    [Fact]
+    public async Task GetVersionAsync_ThrowsBibleEmptyResponseException_WhenBodyIsNull()
+    {
+        var client = BuildClient(HttpStatusCode.OK, "null");
+        var act = () => client.GetVersionAsync(3034);
+        await act.Should().ThrowAsync<BibleEmptyResponseException>().WithMessage("*3034*");
+    }
+
+    [Fact]
+    public async Task GetVersionAsync_LogsDebugMessages()
+    {
+        var (client, logger) = BuildClientWithLogger(HttpStatusCode.OK, """{"id": 3034, "abbreviation": "BSB"}""");
+
+        await client.GetVersionAsync(3034);
+
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug && e.Message == "Fetching Bible version 3034.");
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug && e.Message == "Fetched Bible version 3034 (BSB).");
+    }
+
+    [Fact]
     public async Task GetVersionAsync_ThrowsBibleApiException_WhenNotFound()
     {
         var client = BuildClient(HttpStatusCode.NotFound, """{"error":"not found"}""");
@@ -141,7 +211,7 @@ public sealed class BibleClientTests
     {
         var client = BuildClient(HttpStatusCode.OK, "{}");
         var act = () => client.GetVersionAsync(0);
-        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>().WithMessage("*Version id must be greater than zero*");
     }
 
     // -------------------------------------------------------------------------
@@ -163,6 +233,38 @@ public sealed class BibleClientTests
     }
 
     [Fact]
+    public async Task GetIndexAsync_RequestsExpectedPath()
+    {
+        var handler = new FakeHttpMessageHandler(HttpStatusCode.OK, SampleIndexJson);
+        var client = BuildClientFromHandler(handler);
+
+        await client.GetIndexAsync(3034);
+
+        handler.LastRequest!.RequestUri!.AbsolutePath.Should().Be("/v1/bibles/3034/index");
+    }
+
+    [Fact]
+    public async Task GetIndexAsync_ThrowsBibleEmptyResponseException_WhenBodyIsNull()
+    {
+        var client = BuildClient(HttpStatusCode.OK, "null");
+        var act = () => client.GetIndexAsync(3034);
+        await act.Should().ThrowAsync<BibleEmptyResponseException>().WithMessage("*3034*");
+    }
+
+    [Fact]
+    public async Task GetIndexAsync_LogsDebugMessages()
+    {
+        var (client, logger) = BuildClientWithLogger(HttpStatusCode.OK, SampleIndexJson);
+
+        await client.GetIndexAsync(3034);
+
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug && e.Message == "Fetching index for Bible version 3034.");
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug && e.Message == "Fetched index for Bible version 3034 with 2 book(s).");
+    }
+
+    [Fact]
     public async Task GetIndexAsync_ThrowsBibleApiException_WhenNotFound()
     {
         var client = BuildClient(HttpStatusCode.NotFound, """{"error":"not found"}""");
@@ -176,7 +278,7 @@ public sealed class BibleClientTests
     {
         var client = BuildClient(HttpStatusCode.OK, "{}");
         var act = () => client.GetIndexAsync(0);
-        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>().WithMessage("*Version id must be greater than zero*");
     }
 
     // -------------------------------------------------------------------------
@@ -196,6 +298,19 @@ public sealed class BibleClientTests
         books[0].ChapterCount.Should().Be(2);
         books[1].Usfm.Should().Be("EXO");
         books[1].ChapterCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task GetBooksAsync_LogsDebugMessages()
+    {
+        var (client, logger) = BuildClientWithLogger(HttpStatusCode.OK, SampleIndexJson);
+
+        await client.GetBooksAsync(3034);
+
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug && e.Message == "Fetching books for Bible version 3034.");
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug && e.Message == "Fetched 2 book(s) for Bible version 3034.");
     }
 
     [Fact]
@@ -219,9 +334,26 @@ public sealed class BibleClientTests
 
         chapters.Should().HaveCount(2);
         chapters[0].Usfm.Should().Be("GEN.1");
+        chapters[0].Human.Should().Be("Genesis 1");
         chapters[0].VerseCount.Should().Be(2);
         chapters[1].Usfm.Should().Be("GEN.2");
+        chapters[1].Human.Should().Be("Genesis 2");
         chapters[1].VerseCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task GetChaptersAsync_LogsDebugMessages()
+    {
+        var (client, logger) = BuildClientWithLogger(HttpStatusCode.OK, SampleIndexJson);
+
+        await client.GetChaptersAsync(3034, "GEN");
+
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug
+            && e.Message == "Fetching chapters for book GEN in Bible version 3034.");
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug
+            && e.Message == "Fetched 2 chapter(s) for book GEN in Bible version 3034.");
     }
 
     [Fact]
@@ -240,7 +372,8 @@ public sealed class BibleClientTests
         var client = BuildClient(HttpStatusCode.OK, SampleIndexJson);
         var act = () => client.GetChaptersAsync(3034, "REV");
         await act.Should().ThrowAsync<BibleApiException>()
-            .Where(e => e.StatusCode == HttpStatusCode.NotFound);
+            .Where(e => e.StatusCode == HttpStatusCode.NotFound)
+            .WithMessage("*Book 'REV' was not found in Bible version 3034*");
     }
 
     [Fact]
@@ -258,7 +391,7 @@ public sealed class BibleClientTests
     {
         var client = BuildClient(HttpStatusCode.OK, "{}");
         var act = () => client.GetChaptersAsync(3034, bookUsfm);
-        await act.Should().ThrowAsync<ArgumentException>();
+        await act.Should().ThrowAsync<ArgumentException>().WithMessage("*Book USFM code is required*");
     }
 
     // -------------------------------------------------------------------------
@@ -285,7 +418,8 @@ public sealed class BibleClientTests
         var client = BuildClient(HttpStatusCode.OK, SampleIndexJson);
         var act = () => client.GetVersesAsync(3034, "GEN", 99);
         await act.Should().ThrowAsync<BibleApiException>()
-            .Where(e => e.StatusCode == HttpStatusCode.NotFound);
+            .Where(e => e.StatusCode == HttpStatusCode.NotFound)
+            .WithMessage("*Chapter 99 was not found in book 'GEN' of Bible version 3034*");
     }
 
     [Fact]
@@ -294,7 +428,8 @@ public sealed class BibleClientTests
         var client = BuildClient(HttpStatusCode.OK, SampleIndexJson);
         var act = () => client.GetVersesAsync(3034, "REV", 1);
         await act.Should().ThrowAsync<BibleApiException>()
-            .Where(e => e.StatusCode == HttpStatusCode.NotFound);
+            .Where(e => e.StatusCode == HttpStatusCode.NotFound)
+            .WithMessage("*Book 'REV' was not found in Bible version 3034*");
     }
 
     [Fact]
@@ -310,7 +445,7 @@ public sealed class BibleClientTests
     {
         var client = BuildClient(HttpStatusCode.OK, "{}");
         var act = () => client.GetVersesAsync(3034, "", 1);
-        await act.Should().ThrowAsync<ArgumentException>();
+        await act.Should().ThrowAsync<ArgumentException>().WithMessage("*Book USFM code is required*");
     }
 
     [Fact]
@@ -318,7 +453,22 @@ public sealed class BibleClientTests
     {
         var client = BuildClient(HttpStatusCode.OK, "{}");
         var act = () => client.GetVersesAsync(3034, "GEN", 0);
-        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>().WithMessage("*Chapter number must be greater than zero*");
+    }
+
+    [Fact]
+    public async Task GetVersesAsync_LogsDebugMessages()
+    {
+        var (client, logger) = BuildClientWithLogger(HttpStatusCode.OK, SampleIndexJson);
+
+        await client.GetVersesAsync(3034, "GEN", 1);
+
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug
+            && e.Message == "Fetching verses for GEN 1 in Bible version 3034.");
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug
+            && e.Message == "Fetched 2 verse(s) for GEN 1 in Bible version 3034.");
     }
 
     // -------------------------------------------------------------------------
@@ -368,9 +518,16 @@ public sealed class BibleClientTests
     private static BibleClient BuildClient(HttpStatusCode status, string json)
         => BuildClientFromHandler(new FakeHttpMessageHandler(status, json));
 
-    private static BibleClient BuildClientFromHandler(FakeHttpMessageHandler handler)
+    private static BibleClient BuildClientFromHandler(FakeHttpMessageHandler handler, ILogger<BibleClient>? logger = null)
     {
         var httpClient = new HttpClient(handler) { BaseAddress = new System.Uri("https://api.youversion.com") };
-        return new BibleClient(httpClient, NullLogger<BibleClient>.Instance);
+        return new BibleClient(httpClient, logger ?? NullLogger<BibleClient>.Instance);
+    }
+
+    private static (BibleClient Client, CapturingLogger<BibleClient> Logger) BuildClientWithLogger(HttpStatusCode status, string json)
+    {
+        var logger = new CapturingLogger<BibleClient>();
+        var client = BuildClientFromHandler(new FakeHttpMessageHandler(status, json), logger);
+        return (client, logger);
     }
 }

@@ -1,4 +1,5 @@
 using System.Net;
+using Microsoft.Extensions.Logging;
 using System.Net.Http;
 
 using FluentAssertions;
@@ -59,6 +60,63 @@ public sealed class LicenseClientTests
         query.Should().Contain("content_type=bible");
     }
 
+    [Fact]
+    public async Task GetLicensesAsync_BuildsExactQueryString_WithAllAvailableFalse()
+    {
+        var handler = new FakeHttpMessageHandler(HttpStatusCode.OK, """{"data": []}""");
+        var client = BuildClientFromHandler(handler);
+
+        await client.GetLicensesAsync(3034, allAvailable: false);
+
+        handler.LastRequest!.RequestUri!.PathAndQuery.Should().Be(
+            "/v1/licenses?bible_id=3034&all_available=false");
+    }
+
+    [Theory]
+    [InlineData(" ")]
+    [InlineData("\t")]
+    public async Task GetLicensesAsync_ThrowsArgumentException_WhenDeveloperIdIsWhitespace(string developerId)
+    {
+        var client = BuildClient(HttpStatusCode.OK, """{"data": []}""");
+        var act = () => client.GetLicensesAsync(3034, developerId: developerId);
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithMessage("*Developer id cannot be empty or whitespace*");
+    }
+
+    [Theory]
+    [InlineData(" ")]
+    [InlineData("\t")]
+    public async Task GetLicensesAsync_ThrowsArgumentException_WhenContentTypeIsWhitespace(string contentType)
+    {
+        var client = BuildClient(HttpStatusCode.OK, """{"data": []}""");
+        var act = () => client.GetLicensesAsync(3034, contentType: contentType);
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithMessage("*Content type cannot be empty or whitespace*");
+    }
+
+    [Fact]
+    public async Task GetLicensesAsync_ReturnsEmptyList_WhenBodyIsNull()
+    {
+        var client = BuildClient(HttpStatusCode.OK, "null");
+
+        var result = await client.GetLicensesAsync(3034);
+
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GetLicensesAsync_LogsDebugMessages()
+    {
+        var (client, logger) = BuildClientWithLogger(HttpStatusCode.OK, $$"""{"data": [{{LicenseJson}}]}""");
+
+        await client.GetLicensesAsync(3034);
+
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug && e.Message == "Fetching licenses for Bible 3034.");
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug && e.Message == "Fetched 1 license(s) for Bible 3034.");
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]
@@ -66,7 +124,8 @@ public sealed class LicenseClientTests
     {
         var client = BuildClient(HttpStatusCode.OK, """{"data": []}""");
         var act = () => client.GetLicensesAsync(bibleId);
-        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>()
+            .WithMessage("*Bible id must be greater than zero*");
     }
 
     [Theory]
@@ -82,9 +141,16 @@ public sealed class LicenseClientTests
     private static LicenseClient BuildClient(HttpStatusCode status, string json)
         => BuildClientFromHandler(new FakeHttpMessageHandler(status, json));
 
-    private static LicenseClient BuildClientFromHandler(FakeHttpMessageHandler handler)
+    private static LicenseClient BuildClientFromHandler(FakeHttpMessageHandler handler, ILogger<LicenseClient>? logger = null)
     {
         var httpClient = new HttpClient(handler) { BaseAddress = new System.Uri("https://api.youversion.com") };
-        return new LicenseClient(httpClient, NullLogger<LicenseClient>.Instance);
+        return new LicenseClient(httpClient, logger ?? NullLogger<LicenseClient>.Instance);
+    }
+
+    private static (LicenseClient Client, CapturingLogger<LicenseClient> Logger) BuildClientWithLogger(HttpStatusCode status, string json)
+    {
+        var logger = new CapturingLogger<LicenseClient>();
+        var client = BuildClientFromHandler(new FakeHttpMessageHandler(status, json), logger);
+        return (client, logger);
     }
 }

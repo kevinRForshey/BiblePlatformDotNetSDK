@@ -3,6 +3,7 @@ using System.Net.Http;
 
 using FluentAssertions;
 
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 using Platform.API.Exceptions;
@@ -40,6 +41,24 @@ public sealed class ApiRequestHelperTests
         exception.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
         exception.Which.Message.Should().Be("API request to '/v1/test' failed with status 404 (Not Found).");
         exception.Which.ResponseBody.Should().Be("the error body");
+    }
+
+    [Fact]
+    public async Task EnsureSuccessAsync_LogsError_WhenResponseFails()
+    {
+        using var response = new HttpResponseMessage(HttpStatusCode.NotFound)
+        {
+            ReasonPhrase = "Not Found",
+            Content = new StringContent("the error body"),
+        };
+        var logger = new CapturingLogger<ApiRequestHelperTests>();
+
+        var act = () => ApiRequestHelper.EnsureSuccessAsync(response, "/v1/test", logger, CancellationToken.None);
+        await act.Should().ThrowAsync<BibleApiException>();
+
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Error &&
+            e.Message == "API request to '/v1/test' failed with HTTP 404 Not Found. Response body: the error body");
     }
 
     [Fact]

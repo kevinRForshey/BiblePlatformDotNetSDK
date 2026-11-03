@@ -208,7 +208,7 @@ public sealed class ServiceCollectionExtensionsTests
     {
         var services = new ServiceCollection();
 
-        var act = () => services.AddBibleApiClients((Action<Configuration.BibleApiOptions>)null!);
+        var act = () => services.AddBibleApiClients((Action<Platform.API.Configuration.BibleApiOptions>)null!);
 
         act.Should().Throw<ArgumentNullException>();
     }

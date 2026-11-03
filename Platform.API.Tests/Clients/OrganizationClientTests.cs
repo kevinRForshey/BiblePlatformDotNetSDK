@@ -1,4 +1,5 @@
 using System.Net;
+using Microsoft.Extensions.Logging;
 using System.Net.Http;
 
 using FluentAssertions;
@@ -108,6 +109,20 @@ public sealed class OrganizationClientTests
     }
 
     [Fact]
+    public async Task GetOrganizationsAsync_LogsDebugMessages()
+    {
+        var (client, logger) = BuildClientWithLogger(
+            HttpStatusCode.OK, $$"""{"data": [{{OrganizationJson}}]}""");
+
+        await client.GetOrganizationsAsync(pageToken: "tok");
+
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug && e.Message == "Fetching organizations (pageToken=tok).");
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug && e.Message == "Fetched 1 organization(s) from API.");
+    }
+
+    [Fact]
     public async Task GetOrganizationAsync_ReturnsOrganization_WhenApiSucceeds()
     {
         var client = BuildClient(HttpStatusCode.OK, OrganizationJson);
@@ -159,6 +174,19 @@ public sealed class OrganizationClientTests
         await client.GetOrganizationAsync("org-1", acceptLanguage: "es");
 
         handler.LastRequest!.Headers.AcceptLanguage.ToString().Should().Be("es");
+    }
+
+    [Fact]
+    public async Task GetOrganizationAsync_LogsDebugMessages()
+    {
+        var (client, logger) = BuildClientWithLogger(HttpStatusCode.OK, OrganizationJson);
+
+        await client.GetOrganizationAsync("org-1");
+
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug && e.Message == "Fetching organization org-1.");
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug && e.Message == "Fetched organization org-1.");
     }
 
     [Fact]
@@ -263,12 +291,39 @@ public sealed class OrganizationClientTests
             .WithMessage("*greater than zero*");
     }
 
+    [Fact]
+    public async Task GetOrganizationBiblesAsync_LogsDebugMessages()
+    {
+        const string json = """
+            {"data": [{ "id": 3034, "abbreviation": "BSB", "localized_abbreviation": "BSB",
+            "title": "Berean Standard Bible", "localized_title": "Berean Standard Bible",
+            "language_tag": "en", "books": ["GEN"], "organization_id": "org-1" }]}
+            """;
+        var (client, logger) = BuildClientWithLogger(HttpStatusCode.OK, json);
+
+        await client.GetOrganizationBiblesAsync("org-1");
+
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug
+            && e.Message == "Fetching Bible versions for organization org-1.");
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug
+            && e.Message == "Fetched 1 Bible version(s) for organization org-1.");
+    }
+
     private static OrganizationClient BuildClient(HttpStatusCode status, string json)
         => BuildClientFromHandler(new FakeHttpMessageHandler(status, json));
 
-    private static OrganizationClient BuildClientFromHandler(FakeHttpMessageHandler handler)
+    private static OrganizationClient BuildClientFromHandler(FakeHttpMessageHandler handler, ILogger<OrganizationClient>? logger = null)
     {
         var httpClient = new HttpClient(handler) { BaseAddress = new System.Uri("https://api.youversion.com") };
-        return new OrganizationClient(httpClient, NullLogger<OrganizationClient>.Instance);
+        return new OrganizationClient(httpClient, logger ?? NullLogger<OrganizationClient>.Instance);
+    }
+
+    private static (OrganizationClient Client, CapturingLogger<OrganizationClient> Logger) BuildClientWithLogger(HttpStatusCode status, string json)
+    {
+        var logger = new CapturingLogger<OrganizationClient>();
+        var client = BuildClientFromHandler(new FakeHttpMessageHandler(status, json), logger);
+        return (client, logger);
     }
 }

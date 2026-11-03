@@ -1,5 +1,6 @@
-#region usings 
+#region usings
 using System.Net;
+using Microsoft.Extensions.Logging;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Platform.API.Clients;
@@ -94,11 +95,40 @@ public sealed class PassageClientTests
     }
 
     [Fact]
+    public async Task GetPassageAsync_RequestsExpectedPath()
+    {
+        var handler = new FakeHttpMessageHandler(HttpStatusCode.OK, PassageJson);
+        var client = BuildClientFromHandler(handler);
+
+        await client.GetPassageAsync(3034, TestReferences.John316);
+
+        handler.LastRequest!.RequestUri!.AbsolutePath.Should().Be("/v1/bibles/3034/passages/JHN.3.16");
+    }
+
+    [Fact]
+    public async Task GetPassageAsync_LogsDebugMessages()
+    {
+        var logger = new CapturingLogger<PassageClient>();
+        var handler = new FakeHttpMessageHandler(HttpStatusCode.OK, PassageJson);
+        var client = BuildClientFromHandler(handler, logger);
+
+        await client.GetPassageAsync(3034, TestReferences.John316);
+
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug
+            && e.Message == "Fetching passage JHN.3.16 from version 3034 (format=Text).");
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Debug
+            && e.Message == "Fetched passage JHN.3.16 from version 3034.");
+    }
+
+    [Fact]
     public async Task GetPassageAsync_ThrowsArgumentOutOfRangeException_WhenVersionIdIsNotPositive()
     {
         var client = BuildClient(HttpStatusCode.OK, PassageJson);
         var act = () => client.GetPassageAsync(0, Reference.FromString("JHN.3.16"), null);
-        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>()
+            .WithMessage("*Version id must be greater than zero*");
     }
 
     [Theory]
@@ -109,6 +139,15 @@ public sealed class PassageClientTests
         var client = BuildClient(HttpStatusCode.OK, PassageJson);
         var act = () => client.GetPassageAsync(3034, Reference.FromString(usfm));
         await act.Should().ThrowAsync<FormatException>();
+    }
+
+    [Fact]
+    public async Task GetPassageAsync_ThrowsBibleEmptyResponseException_WhenBodyIsNull()
+    {
+        var client = BuildClient(HttpStatusCode.OK, "null");
+        var act = () => client.GetPassageAsync(3034, TestReferences.John316);
+        await act.Should().ThrowAsync<BibleEmptyResponseException>()
+            .WithMessage("*JHN.3.16*version 3034*");
     }
 
     // -------------------------------------------------------------------------
@@ -134,10 +173,10 @@ public sealed class PassageClientTests
     private static PassageClient BuildClient(HttpStatusCode status, string json)
         => BuildClientFromHandler(new FakeHttpMessageHandler(status, json));
 
-    private static PassageClient BuildClientFromHandler(FakeHttpMessageHandler handler)
+    private static PassageClient BuildClientFromHandler(FakeHttpMessageHandler handler, ILogger<PassageClient>? logger = null)
     {
         var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://api.youversion.com") };
         var usfmService = new UsfmReferenceService();
-        return new PassageClient(httpClient, NullLogger<PassageClient>.Instance, usfmService);
+        return new PassageClient(httpClient, logger ?? NullLogger<PassageClient>.Instance, usfmService);
     }
 }

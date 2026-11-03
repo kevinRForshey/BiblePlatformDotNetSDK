@@ -200,7 +200,7 @@ public sealed class ReferenceTests
     public void FromString_ThrowsForEmptyOrWhitespace(string usfm)
     {
         var act = () => Reference.FromString(usfm);
-        act.Should().Throw<FormatException>();
+        act.Should().Throw<FormatException>().WithMessage("empty reference");
     }
 
     [Theory]
@@ -215,6 +215,7 @@ public sealed class ReferenceTests
     [InlineData("GEN.1.1000")]   // verse at/above range
     [InlineData("GEN.1.5-3")]    // reversed verse range
     [InlineData("GEN.1.-5")]     // malformed negative-looking verse
+    [InlineData("GEN.1.1-abc")]  // non-numeric end of a verse range
     [InlineData("GEN.INTRO")]    // intro with no number
     [InlineData("GEN.INTRO0")]   // intro below range
     [InlineData("GEN.INTROX")]   // non-numeric intro
@@ -223,7 +224,7 @@ public sealed class ReferenceTests
     public void FromString_ThrowsForInvalidUsfm(string usfm)
     {
         var act = () => Reference.FromString(usfm);
-        act.Should().Throw<FormatException>();
+        act.Should().Throw<FormatException>().Which.Message.Should().NotBeNullOrWhiteSpace();
     }
 
     [Theory]
@@ -233,7 +234,7 @@ public sealed class ReferenceTests
     public void FromString_ThrowsWhenJoinedPartsDisagreeOnChapter(string usfm)
     {
         var act = () => Reference.FromString(usfm);
-        act.Should().Throw<FormatException>();
+        act.Should().Throw<FormatException>().WithMessage("references must be in the same chapter");
     }
 
     [Fact]
@@ -248,7 +249,8 @@ public sealed class ReferenceTests
         reference.IsVerseRange().Should().BeFalse();
 
         var act = () => reference.ToString();
-        act.Should().Throw<InvalidOperationException>();
+        act.Should().Throw<InvalidOperationException>()
+            .WithMessage("Reference is in an invalid state (missing chapter, intro, or verses).");
     }
 
     // -------------------------------------------------------------------------
@@ -315,6 +317,22 @@ public sealed class ReferenceTests
         reference.IsIntro().Should().Be(isIntro);
         reference.IsSingleVerse().Should().Be(isSingleVerse);
         reference.IsVerseRange().Should().Be(isVerseRange);
+    }
+
+    [Fact]
+    public void IsSingleVerse_RequiresPositiveChapter_EvenWithMatchingVerseRange()
+    {
+        var reference = new Reference("GEN", chapter: 0, verses: [new VerseRange(5, 5)]);
+
+        reference.IsSingleVerse().Should().BeFalse();
+    }
+
+    [Fact]
+    public void IsVerseRange_RequiresPositiveChapter_EvenWithDifferingVerseRange()
+    {
+        var reference = new Reference("GEN", chapter: 0, verses: [new VerseRange(1, 3)]);
+
+        reference.IsVerseRange().Should().BeFalse();
     }
 
     // -------------------------------------------------------------------------
@@ -480,6 +498,23 @@ public sealed class ReferenceTests
 #pragma warning disable CS1718 // intentional self-comparison to exercise the ReferenceEquals fast path
         (reference == reference).Should().BeTrue();
 #pragma warning restore CS1718
+    }
+
+    [Fact]
+    public void GetHashCode_IsSensitiveToEveryComponent()
+    {
+        var baseline = new Reference("GEN", 1, section: 1, verses: [new VerseRange(1, 1)]);
+
+        baseline.GetHashCode().Should().NotBe(
+            new Reference("EXO", 1, section: 1, verses: [new VerseRange(1, 1)]).GetHashCode());
+        baseline.GetHashCode().Should().NotBe(
+            new Reference("GEN", 2, section: 1, verses: [new VerseRange(1, 1)]).GetHashCode());
+        baseline.GetHashCode().Should().NotBe(
+            new Reference("GEN", 1, section: 2, verses: [new VerseRange(1, 1)]).GetHashCode());
+        baseline.GetHashCode().Should().NotBe(
+            new Reference("GEN", 1, section: 1, verses: [new VerseRange(2, 2)]).GetHashCode());
+        new Reference("GEN", 0, intro: 1).GetHashCode().Should().NotBe(
+            new Reference("GEN", 0, intro: 2).GetHashCode());
     }
 
     [Fact]
